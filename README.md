@@ -64,6 +64,30 @@ python -m seedance models --model bytedance/seedance-2.0-mini
 python -m seedance resume <job_id>
 ```
 
+## 給 AI Agent 使用（Skill）
+
+除了人用的 CLI 與 GUI，本專案也包成了 skill，讓 AI agent 能可靠地呼叫。
+
+Skill 放在 `.claude/skills/seedance-video/`，在這個專案目錄下工作的 agent 會自動看到它。要讓所有專案都能用，複製到使用者層級即可：
+
+```bash
+cp -r .claude/skills/seedance-video ~/.claude/skills/
+```
+
+另有打包好的 `seedance-video.skill`（就是上面那個資料夾的壓縮檔），可用於安裝到其他環境或分享。
+
+### `--json` 模式
+
+Skill 之所以能可靠運作，靠的是 CLI 的機器可讀輸出。`gen`、`batch`、`resume`、`models` 都支援 `--json`：
+
+```bash
+python -m seedance gen "提示詞" --duration 5 --json --dry-run
+```
+
+約定是 **stdout 只有一個 JSON 物件，進度訊息全部走 stderr**，呼叫端可以直接 `json.loads(stdout)`。成功時 `ok: true`；失敗時 `ok: false`、`error.type` 是錯誤類別名稱、離開碼為 1。逾時錯誤還會附上 `job_id` 與 `recoverable_with: "resume"`，讓呼叫端知道那筆已計費、可以取件而不必重新生成。
+
+Skill 本身最重要的規則是：**先 `--dry-run` 免費試算、把價格告訴使用者、得到同意才送單**。成本護欄擋下來時不會自動加 `--yes` 重試，那等於繞過使用者授權。
+
 ## 打包成執行檔（雙擊開啟，不用裝 Python）
 
 macOS：
