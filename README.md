@@ -64,6 +64,26 @@ python -m seedance models --model bytedance/seedance-2.0-mini
 python -m seedance resume <job_id>
 ```
 
+## 打包成執行檔（雙擊開啟，不用裝 Python）
+
+macOS：
+
+```bash
+./build_macos.sh
+```
+
+Windows（需先裝好 Python 3.9+，安裝時勾選 "Add python.exe to PATH"）：
+
+```
+build_windows.bat
+```
+
+各自產出 `dist/Seedance.app`（macOS）或 `dist/Seedance.exe`（Windows）。**打包只能在對應系統上做**，這台機器做出的 App 不能拿去另一個作業系統用，Windows 版要在 Windows 機器上另外跑一次 `build_windows.bat`。
+
+執行檔會把 `.env`、`outputs/`、`jobs/`、`.cache/` 放在**執行檔所在的資料夾**（而不是專案原始碼目錄），所以散布時把 `.env`（填好金鑰）跟執行檔放在同一個資料夾即可。
+
+macOS 因為 App 未經 Apple 簽章，首次雙擊會被 Gatekeeper 擋下，對 App 按右鍵→「開啟」一次即可（之後就能正常雙擊）。
+
 ## 運作方式
 
 OpenRouter 的影片生成是非同步任務：

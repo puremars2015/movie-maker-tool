@@ -9,11 +9,30 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from .errors import ConfigError
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _detect_project_root() -> Path:
+    """一般執行時是原始碼所在的專案根目錄。
+
+    打包成 PyInstaller 執行檔後 __file__ 會落在解壓縮出來的暫存目錄，
+    不是使用者能看到、能編輯 .env 的地方，所以改用「執行檔旁邊」的目錄：
+        - macOS .app：Contents/MacOS/seedance → 回推到 .app 外層的資料夾
+        - Windows/單一執行檔：執行檔所在資料夾
+    """
+    if getattr(sys, "frozen", False):
+        exe_path = Path(sys.executable).resolve()
+        if sys.platform == "darwin" and ".app/Contents/MacOS" in str(exe_path):
+            # .../SomeDir/Seedance.app/Contents/MacOS/seedance
+            return exe_path.parents[3]
+        return exe_path.parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _detect_project_root()
 ENV_FILE = PROJECT_ROOT / ".env"
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 JOBS_DIR = PROJECT_ROOT / "jobs"

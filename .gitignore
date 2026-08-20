@@ -17,3 +17,9 @@ jobs/
 
 __pycache__/
 *.pyc
+
+# 打包執行檔用
+.buildvenv/
+build/
+dist/
+*.spec
