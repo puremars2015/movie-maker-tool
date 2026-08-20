@@ -1,0 +1,25 @@
+{
+  "defaults": {
+    "model": "bytedance/seedance-2.0-mini",
+    "size": "480x854",
+    "duration": 5,
+    "generate_audio": false
+  },
+  "scenes": [
+    {
+      "name": "01-開場",
+      "prompt": "清晨的老街，霧氣未散，鏡頭從地面緩慢上升，暖色晨光灑在紅磚牆上"
+    },
+    {
+      "name": "02-角色登場",
+      "prompt": "一隻橘貓從巷口走出來，停下回頭看鏡頭，淺景深",
+      "duration": 6
+    },
+    {
+      "name": "03-收尾",
+      "prompt": "鏡頭拉遠，整條街道在陽光下甦醒，行人漸多",
+      "duration": 5,
+      "references": []
+    }
+  ]
+}
