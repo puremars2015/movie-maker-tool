@@ -133,7 +133,7 @@ class SeedanceApp:
         row += 1
         self.audio_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            right, text="同時生成音訊（會增加費用）", variable=self.audio_var, command=self._update_estimate
+            right, text="同時生成音訊", variable=self.audio_var, command=self._update_estimate
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
 
         row += 1
