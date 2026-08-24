@@ -167,17 +167,18 @@ class ProjectTab(ttk.Frame):
 
     # --- 專案檔 -------------------------------------------------------
 
-    def _open(self, path: str | None = None) -> None:
+    def _open(self, path: str | None = None) -> bool:
+        """載入專案檔。回傳是否成功——呼叫端要靠它判斷能不能繼續。"""
         path = path or filedialog.askopenfilename(
             title="開啟專案檔", filetypes=[("專案 JSON", "*.json"), ("所有檔案", "*.*")]
         )
         if not path:
-            return
+            return False
         try:
             self.project = load_project(path)
         except SeedanceError as exc:
             messagebox.showerror("專案檔有問題", str(exc))
-            return
+            return False
 
         self.state = ProjectState.load(self.project)
         self.scenes = [dict(s) for s in (self.project.raw.get("scenes") or [])]
@@ -188,6 +189,7 @@ class ProjectTab(ttk.Frame):
         self._refresh_table()
         self.run_button.configure(state="normal")
         self._log("已開啟 %s（%d 鏡）" % (self.project.path.name, len(self.scenes)))
+        return True
 
     def _new(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -201,17 +203,19 @@ class ProjectTab(ttk.Frame):
         write_template(target, cast_images=images)
         self._open(str(target))
 
-    def _save(self) -> None:
+    def _save(self) -> bool:
         if not self.project:
-            return
-        self._apply_editor(silent=True)
+            return False
+        self._flush_editor()
         data = dict(self.project.raw)
         data["scenes"] = self.scenes
         self.project.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         self._log("已儲存 %s" % self.project.path.name)
-        self._open(str(self.project.path))   # 重新載入以套用驗證與估價
+        # 重新載入以套用驗證與估價。若載入失敗，記憶體裡還是舊的專案內容，
+        # 這時絕不能繼續往下轉出——那會拿過期的分鏡去生成，而且是要花錢的。
+        return self._open(str(self.project.path))
 
     # --- 表格 ---------------------------------------------------------
 
@@ -255,6 +259,11 @@ class ProjectTab(ttk.Frame):
             % (todo, total, total * 0.416, spent)
         )
 
+        # 重建表格會清掉選取，補回來並保持與 current_index 一致；不一致的話
+        # 佇列裡的 <<TreeviewSelect>> 會被當成「使用者換了一列」而互相打架。
+        if self.current_index is not None and 0 <= self.current_index < len(self.scenes):
+            self.tree.selection_set(str(self.current_index))
+
     def _estimates(self) -> dict[str, float]:
         """逐鏡估價。
 
@@ -295,15 +304,24 @@ class ProjectTab(ttk.Frame):
             ttk.Checkbutton(self.cast_frame, text=name, variable=var).pack(side="left", padx=2)
 
     def _on_select(self, _event=None) -> None:
+        """切換選取列：先把上一列的編輯寫回資料，再載入新的一列。
+
+        這裡只能呼叫 _flush_editor（純資料），不能呼叫 _apply_editor。
+        _apply_editor 會改動選取狀態，而 Tk 的 <<TreeviewSelect>> 是排進佇列
+        非同步送達的——若在這裡把選取設回舊的一列，下一輪事件又會發現不一致，
+        兩者就會無限來回把事件迴圈塞爆，UI 直接凍結。
+        """
         selection = self.tree.selection()
         if not selection:
             return
         index = int(selection[0])
-        if index == self.current_index:
+        if index == self.current_index or index >= len(self.scenes):
             return
-        self._apply_editor(silent=True)     # 先把上一列的編輯寫回去
+
+        self._flush_editor()
         self.current_index = index
         self._load_editor(self.scenes[index])
+        self._refresh_table()   # 結束時選取列會等於 current_index，巢狀事件一比就返回
 
     def _load_editor(self, scene: dict) -> None:
         defaults = self.project.defaults if self.project else {}
@@ -318,7 +336,8 @@ class ProjectTab(ttk.Frame):
         for name, var in self.cast_vars.items():
             var.set(name in selected)
 
-    def _apply_editor(self, silent: bool = False) -> None:
+    def _flush_editor(self) -> None:
+        """把編輯區的欄位寫回目前這一列的資料。純資料操作，不碰任何元件狀態。"""
         if self.current_index is None or self.current_index >= len(self.scenes):
             return
         scene = self.scenes[self.current_index]
@@ -344,16 +363,20 @@ class ProjectTab(ttk.Frame):
         else:
             scene.pop("cast", None)
 
+    def _apply_editor(self, silent: bool = False) -> None:
+        """寫回資料並刷新畫面。給「套用到此列」按鈕與存檔／執行前呼叫。"""
+        self._flush_editor()
+        if self.current_index is None or self.current_index >= len(self.scenes):
+            return
         if not silent:
-            self._log("已套用到 %s" % scene["id"])
+            self._log("已套用到 %s" % self.scenes[self.current_index].get("id", ""))
         self._refresh_options()
         self._refresh_table()
-        self.tree.selection_set(str(self.current_index))
 
     def _add_scene(self) -> None:
         if not self.project:
             return
-        self._apply_editor(silent=True)
+        self._flush_editor()
         existing = {s.get("id") for s in self.scenes}
         index = len(self.scenes) + 1
         while ("s%02d" % index) in existing:
@@ -390,7 +413,7 @@ class ProjectTab(ttk.Frame):
         target = self.current_index + delta
         if not 0 <= target < len(self.scenes):
             return
-        self._apply_editor(silent=True)
+        self._flush_editor()
         self.scenes[self.current_index], self.scenes[target] = (
             self.scenes[target], self.scenes[self.current_index])
         self.current_index = target
@@ -402,9 +425,9 @@ class ProjectTab(ttk.Frame):
     def _run(self) -> None:
         if not self.project or (self.worker and self.worker.is_alive()):
             return
-        self._apply_editor(silent=True)
-        self._save()
-        if not self.project:
+        self._flush_editor()
+        if not self._save():
+            self._log("專案未能重新載入，已中止轉出（沒有送出任何請求）。")
             return
 
         try:
