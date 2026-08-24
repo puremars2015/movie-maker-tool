@@ -489,7 +489,14 @@ class ProjectTab(ttk.Frame):
             ))
 
         spent = self.state.total_cost() if self.state else 0.0
-        scope = "勾選 %d 鏡" % len(targets) if self.picked_ids else "待生成 %d 鏡" % len(targets)
+        # 勾到的全是已完成的鏡頭時要講清楚，否則畫面只顯示「0 鏡、US$0.000」，
+        # 看起來像壞掉，其實是「這些不會重跑也不會再收費」。
+        if self.picked_ids and not targets:
+            scope = "勾選的 %d 鏡都已完成" % len(self.picked_ids)
+        elif self.picked_ids:
+            scope = "勾選 %d 鏡" % len(targets)
+        else:
+            scope = "待生成 %d 鏡" % len(targets)
         # 有實測折扣的模型才顯示預期金額；沒量過的直接顯示牌價，不要讓人以為比較便宜。
         if abs(expected - total) > 1e-9:
             money = "牌價 US$%.3f（依實測折扣預期約 US$%.3f）" % (total, expected)
@@ -497,9 +504,13 @@ class ProjectTab(ttk.Frame):
             money = "預估 US$%.3f" % total
         self.summary_var.set("%s，%s｜已花費 US$%.4f" % (scope, money, spent))
         if getattr(self, "run_button", None):
-            self.run_button.configure(
-                text="轉出勾選的 %d 鏡" % len(targets) if self.picked_ids else "開始轉出"
-            )
+            if self.picked_ids and not targets:
+                label = "勾選的都已完成"
+            elif self.picked_ids:
+                label = "轉出勾選的 %d 鏡" % len(targets)
+            else:
+                label = "開始轉出"
+            self.run_button.configure(text=label)
 
         # 重建表格會清掉選取，補回來並保持與 current_index 一致；不一致的話
         # 佇列裡的 <<TreeviewSelect>> 會被當成「使用者換了一列」而互相打架。
