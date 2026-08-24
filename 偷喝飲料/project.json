@@ -20,7 +20,6 @@
     {
       "id": "s02",
       "prompt": "第二個鏡頭。加上 continue_from 就會接續前一鏡的最後一格。",
-      "continue_from": "s01",
       "duration": 5,
       "size": "480x854",
       "generate_audio": false
