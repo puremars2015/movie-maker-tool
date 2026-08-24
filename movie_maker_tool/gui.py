@@ -22,7 +22,7 @@ from . import cost as cost_module
 from .capabilities import ModelCapabilities, get_capabilities
 from .client import GenerationSpec
 from .config import DEFAULT_MODEL, OUTPUT_DIR, api_key_source, cost_limit_usd, get_api_key
-from .errors import SeedanceError
+from .errors import MovieMakerError
 from .gui_project import ProjectTab
 from .media import FILE_DIALOG_TYPES, describe, has_video_reference
 from .runner import generate
@@ -30,10 +30,10 @@ from .runner import generate
 IMAGE_DIALOG_TYPES = [("圖片", "*.png *.jpg *.jpeg *.webp *.gif *.bmp"), ("所有檔案", "*.*")]
 
 
-class SeedanceApp:
+class MovieMakerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("趣味動畫製作 — Seedance 影片生成")
+        self.root.title("趣味動畫製作 — 影片生成")
         self.root.geometry("980x760")
         self.root.minsize(880, 680)
 
@@ -59,7 +59,7 @@ class SeedanceApp:
 
         header = ttk.Frame(outer)
         header.pack(fill="x", pady=(0, 8))
-        ttk.Label(header, text="Seedance 影片生成", font=("Microsoft JhengHei UI", 14, "bold")).pack(side="left")
+        ttk.Label(header, text="影片生成", font=("Microsoft JhengHei UI", 14, "bold")).pack(side="left")
         self.status_var = tk.StringVar(value="載入模型能力中…")
         ttk.Label(header, textvariable=self.status_var, foreground="#666").pack(side="right")
 
@@ -233,7 +233,7 @@ class SeedanceApp:
                 choices = cost_module.selectable_models()
                 caps = get_capabilities(target)
                 self.messages.put(("caps", (caps, choices)))
-            except SeedanceError as exc:
+            except MovieMakerError as exc:
                 self.messages.put(("caps_error", str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
@@ -349,7 +349,7 @@ class SeedanceApp:
                 reference_count=len(self.references)
                 + bool(self.first_frame_var.get()) + bool(self.last_frame_var.get()),
             )
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             self.estimate_var.set(str(exc))
             return
         self.estimate_var.set(estimate.format())
@@ -388,7 +388,7 @@ class SeedanceApp:
 
         try:
             api_key = get_api_key()
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             messagebox.showerror("缺少金鑰", str(exc))
             return
 
@@ -431,7 +431,7 @@ class SeedanceApp:
                     should_cancel=self.cancel_event.is_set,
                 )
                 self.messages.put(("done", result.video_path))
-            except SeedanceError as exc:
+            except MovieMakerError as exc:
                 self.messages.put(("error", str(exc)))
             except Exception as exc:  # 未預期錯誤也要讓使用者看到，而不是靜靜卡住
                 self.messages.put(("error", "未預期的錯誤：%r" % exc))
@@ -516,7 +516,7 @@ def main() -> None:
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    SeedanceApp(root)
+    MovieMakerApp(root)
     root.mainloop()
 
 

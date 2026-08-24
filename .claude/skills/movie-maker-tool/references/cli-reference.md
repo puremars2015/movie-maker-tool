@@ -247,7 +247,7 @@
 | 項目 | 位置 |
 |---|---|
 | 金鑰 | `.env` 的 `OPENROUTER_API_KEY`，找不到才用系統環境變數 |
-| 成本護欄 | `.env` 的 `SEEDANCE_COST_LIMIT`，預設 0.50（美元） |
+| 成本護欄 | `.env` 的 `MOVIE_MAKER_COST_LIMIT`，預設 0.50（美元） |
 | 影片產出 | `outputs/` |
 | 任務記錄 | `jobs/<job_id>.json` |
 | 模型能力快取 | `.cache/videos_models.json`，24 小時 |

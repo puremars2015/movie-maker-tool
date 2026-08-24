@@ -1,11 +1,11 @@
 ---
-name: seedance-video
-description: 用 OpenRouter 的 Seedance 模型生成影片，支援純文字生成、角色參考圖生成、首尾影格控制，以及把整個故事拆成多鏡分鏡一次轉出的專案模式。當使用者提到生成影片、做動畫、AI 影片、短片、多鏡頭、分鏡、把故事或劇本變成影片、一次轉出全部、text-to-video、image-to-video、文生視頻、seedance，或想用人物照片做動畫時，都要使用這個 skill。每次生成都會實際扣款，這個 skill 內建先試算費用再取得同意的流程，也內建避免重複計費的續跑機制，所以即使使用者只是問「這樣要多少錢」也應該用它。
+name: movie-maker-tool
+description: 透過 OpenRouter 生成影片，支援 ByteDance Seedance 與 MiniMax H3 等多個模型，可做純文字生成、角色參考圖生成、首尾影格控制，以及把整個故事拆成多鏡分鏡一次轉出的專案模式。當使用者提到生成影片、做動畫、AI 影片、短片、多鏡頭、分鏡、把故事或劇本變成影片、一次轉出全部、text-to-video、image-to-video、文生視頻、seedance，或想用人物照片做動畫時，都要使用這個 skill。每次生成都會實際扣款，這個 skill 內建先試算費用再取得同意的流程，也內建避免重複計費的續跑機制，所以即使使用者只是問「這樣要多少錢」也應該用它。
 ---
 
-# Seedance 影片生成
+# movie-maker-tool 影片生成
 
-包裝本專案的 `seedance` CLI，透過 OpenRouter 呼叫 `bytedance/seedance-2.0-mini` 生成影片。
+包裝本專案的 `movie-maker-tool` CLI，透過 OpenRouter 生成影片。預設模型是 `bytedance/seedance-2.0-mini`，也支援 `minimax/hailuo-3` 等其他型號。
 
 ## 最重要的一件事：這會花使用者的錢
 
@@ -20,12 +20,12 @@ description: 用 OpenRouter 的 Seedance 模型生成影片，支援純文字生
 ### 1. 確認環境
 
 ```bash
-python -m seedance models --model bytedance/seedance-2.0-mini --json
+python -m movie_maker_tool models --model bytedance/seedance-2.0-mini --json
 ```
 
 這個指令不需要金鑰、不花錢，回傳模型當下真正支援的尺寸、秒數與能力。**參數要以它的回傳為準，不要憑記憶填**，供應商會調整支援清單。
 
-若這步失敗，多半是不在專案目錄下執行。專案根目錄需含 `seedance/` 套件，預設位置：
+若這步失敗，多半是不在專案目錄下執行。專案根目錄需含 `movie_maker_tool/` 套件，預設位置：
 
 ```
 C:\Users\purem\OneDrive\Desktop\趣味動畫製作
@@ -36,7 +36,7 @@ C:\Users\purem\OneDrive\Desktop\趣味動畫製作
 ### 2. 免費試算
 
 ```bash
-python -m seedance gen "你的提示詞" --duration 5 --size 480x854 --json --dry-run
+python -m movie_maker_tool gen "你的提示詞" --duration 5 --size 480x854 --json --dry-run
 ```
 
 回傳 `estimate.list_price_usd` 與 `exceeds_cost_limit`。這步會驗證所有參數，錯的秒數或尺寸會在這裡就被擋下並列出合法值。
@@ -55,7 +55,7 @@ python -m seedance gen "你的提示詞" --duration 5 --size 480x854 --json --dr
 ### 4. 生成
 
 ```bash
-python -m seedance gen "你的提示詞" --duration 5 --size 480x854 --json
+python -m movie_maker_tool gen "你的提示詞" --duration 5 --size 480x854 --json
 ```
 
 生成要 30 秒到數分鐘，程式會自己輪詢到完成並下載。回傳含 `video_path`、`job_id`、`actual_cost_usd`。
@@ -82,7 +82,7 @@ python -m seedance gen "你的提示詞" --duration 5 --size 480x854 --json
 只要任務送出去就已經計費，程式當掉、網路斷線都不會讓那筆錢回來。所以送單成功的當下，任務就被寫進 `jobs/<job_id>.json`。
 
 ```bash
-python -m seedance resume <job_id> --json
+python -m movie_maker_tool resume <job_id> --json
 ```
 
 看到 `JobTimeoutError` 或使用者說「剛剛那支不見了」時，先去 `jobs/` 找最近的記錄再 resume，而不是重新生成一支 —— 重生成等於再付一次錢。
@@ -127,7 +127,7 @@ seedance 的費用只跟「寬 × 高 × 秒數」有關（`tokens = 寬 × 高 
 ## 參考素材
 
 ```bash
-python -m seedance gen "一家人在客廳" --ref 爸爸.png --ref 媽媽.png --json --dry-run
+python -m movie_maker_tool gen "一家人在客廳" --ref 爸爸.png --ref 媽媽.png --json --dry-run
 ```
 
 `--ref` 用於角色一致性或畫風參考，不會強制成為畫面的第一格。要精確控制開場畫面才用 `--first-frame`。
@@ -161,24 +161,24 @@ python -m seedance gen "一家人在客廳" --ref 爸爸.png --ref 媽媽.png --
 - **`continue_from`** 會抽出前一鏡的最後一格當這一鏡的首影格，讓畫面接得起來。代價是那一鏡必須等前一鏡跑完，不能並行。需要畫面連貫時才用，只是同一組角色的話靠 `cast` 就夠了。
 - 相對路徑以**專案檔所在目錄**為基準，不是工作目錄。
 
-`python -m seedance project init project.json` 會產生骨架，而且會把目錄裡現成的圖片自動填進 `cast`，省得你猜路徑。
+`python -m movie_maker_tool project init project.json` 會產生骨架，而且會把目錄裡現成的圖片自動填進 `cast`，省得你猜路徑。
 
 ### 流程
 
 ```bash
-python -m seedance project check project.json --json
+python -m movie_maker_tool project check project.json --json
 ```
 
 免費。驗證每一鏡、解析 cast、檢查接續關係有沒有斷鏈或循環，並回傳每鏡估價與 `todo_list_price_usd`。把總價告訴使用者、取得同意，然後：
 
 ```bash
-python -m seedance project run project.json --json --yes
+python -m movie_maker_tool project run project.json --json --yes
 ```
 
 多鏡專案的總價很容易超過 US$ 0.50 的護欄，所以 `--yes` 幾乎一定會用到 —— 這更是要先講清楚總價的理由，而不是理所當然地加上去。
 
 ```bash
-python -m seedance project status project.json --json
+python -m movie_maker_tool project status project.json --json
 ```
 
 隨時可查每鏡狀態與累計花費。**重跑前先看它**：已經 `done` 的鏡頭再跑一次就是再付一次錢。
@@ -195,7 +195,7 @@ python -m seedance project status project.json --json
 
 ### 也可以交給使用者用 GUI 微調
 
-`python -m seedance gui` 的「專案批次」分頁可以開啟你產生的 `project.json`，逐列改提示詞、秒數、出場角色與接續關係，也能用「編輯角色表…」增刪角色圖、替每一鏡指定專屬參考素材與首尾影格，即時看到總價後再轉出。
+`python -m movie_maker_tool gui` 的「專案批次」分頁可以開啟你產生的 `project.json`，逐列改提示詞、秒數、出場角色與接續關係，也能用「編輯角色表…」增刪角色圖、替每一鏡指定專屬參考素材與首尾影格，即時看到總價後再轉出。
 
 表格最左邊的「轉出」欄還能勾選只生成某幾鏡，等同 `--only`。
 
@@ -203,7 +203,7 @@ python -m seedance project status project.json --json
 
 ### 舊的 batch 指令
 
-`python -m seedance batch scenes.json` 仍然可用，但它沒有狀態、不會跳過已完成的鏡頭，重跑會全部重新收費。多鏡的情況一律優先用專案模式。
+`python -m movie_maker_tool batch scenes.json` 仍然可用，但它沒有狀態、不會跳過已完成的鏡頭，重跑會全部重新收費。多鏡的情況一律優先用專案模式。
 
 ## 產出
 

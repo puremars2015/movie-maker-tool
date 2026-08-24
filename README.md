@@ -1,4 +1,4 @@
-# 趣味動畫製作 — Seedance 影片生成工具
+# movie-maker-tool
 
 透過 OpenRouter 生成影片，支援 ByteDance Seedance 2.0 Mini 與 MiniMax H3 等多個模型，
 CLI 與 GUI 兩種介面共用同一套核心邏輯。所有模型參數都是從 API 讀回來的，換模型時選項會跟著變。
@@ -26,7 +26,7 @@ OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 雙擊 `啟動GUI.bat`，或執行：
 
 ```bash
-python -m seedance gui
+python -m movie_maker_tool gui
 ```
 
 介面提供：模型選擇、提示詞輸入、輸出規格（預設最低解析度的手機直式）、長度秒數、參考素材多選上傳（圖片／影片／音訊）、首尾影格、seed、音訊開關、即時費用預估、執行紀錄、播放與開啟輸出資料夾。模型不支援的欄位（例如 H3 的 seed）會自動變灰。
@@ -34,15 +34,15 @@ python -m seedance gui
 ## CLI
 
 ```bash
-python -m seedance gen "夕陽下的玻璃溫室，霧氣繚繞，鏡頭緩慢推軌向前"
+python -m movie_maker_tool gen "夕陽下的玻璃溫室，霧氣繚繞，鏡頭緩慢推軌向前"
 ```
 
 ```bash
-python -m seedance gen "一家人在客廳玩耍" --ref 爸爸.png --ref 媽媽.png --duration 8 --size 720x1280
+python -m movie_maker_tool gen "一家人在客廳玩耍" --ref 爸爸.png --ref 媽媽.png --duration 8 --size 720x1280
 ```
 
 ```bash
-python -m seedance gen "測試" --dry-run
+python -m movie_maker_tool gen "測試" --dry-run
 ```
 
 `--dry-run` 只做參數驗證與估價，不送單、不花錢。其他常用選項：`--duration` `--size` `--resolution` `--aspect-ratio` `--audio` `--seed` `--first-frame` `--last-frame` `--out` `--yes`。
@@ -53,7 +53,7 @@ python -m seedance gen "測試" --dry-run
 GUI 與 CLI 的選項會跟著變。
 
 ```bash
-python -m seedance models --model minimax/hailuo-3
+python -m movie_maker_tool models --model minimax/hailuo-3
 ```
 
 目前主要用的兩個差異不小：
@@ -100,7 +100,7 @@ seedance-2.0-mini，實測為牌價的 41.6%）。沒量過的模型直接顯示
 多鏡動畫用專案模式。它與舊的 `batch` 最大的差別是**有狀態**：每一鏡的結果都記在狀態檔裡，重跑時自動跳過已完成的鏡頭。十鏡跑到第七鏡失敗，重跑只會補那三鏡，不會把前六鏡重新生成一遍再收一次錢。
 
 ```bash
-python -m seedance project init project.json
+python -m movie_maker_tool project init project.json
 ```
 
 會產生骨架，並把目錄裡現成的圖片自動填進 `cast`。專案檔長這樣：
@@ -124,19 +124,19 @@ python -m seedance project init project.json
 - **`id` 是狀態檔的對應鍵**，改了等於變成新的一鏡、會重新生成也重新收費。
 
 ```bash
-python -m seedance project check project.json
+python -m movie_maker_tool project check project.json
 ```
 
 免費。驗證每一鏡、檢查接續有沒有斷鏈或循環，並列出每鏡估價與總價。確認後：
 
 ```bash
-python -m seedance project run project.json --yes
+python -m movie_maker_tool project run project.json --yes
 ```
 
 有鏡頭失敗時會**立即停止**，不再送出新的鏡頭；已經在跑的會等它完成，因為那筆已經計費，硬中斷只是讓錢白花。修正後直接重跑即可，已完成的不會重做。`--only s03,s07` 可只重跑特定幾鏡，`--force` 才會重做已完成的（等於再付一次錢）。
 
 ```bash
-python -m seedance project status project.json
+python -m movie_maker_tool project status project.json
 ```
 
 隨時查每鏡狀態與累計花費。全部完成後會自動合併成 `output.concat` 指定的檔案。
@@ -153,7 +153,7 @@ GUI 的「專案批次」分頁可以開啟專案檔逐列編輯，不必手改 
 ### 舊的批次指令
 
 ```bash
-python -m seedance batch scenes.example.json --concurrency 3 --concat outputs/final.mp4
+python -m movie_maker_tool batch scenes.example.json --concurrency 3 --concat outputs/final.mp4
 ```
 
 `batch` 仍然可用，但它沒有狀態，重跑會全部重新生成也重新收費。多鏡的情況建議用專案模式。
@@ -161,31 +161,31 @@ python -m seedance batch scenes.example.json --concurrency 3 --concat outputs/fi
 ### 其他
 
 ```bash
-python -m seedance models --model bytedance/seedance-2.0-mini
+python -m movie_maker_tool models --model bytedance/seedance-2.0-mini
 ```
 
 ```bash
-python -m seedance resume <job_id>
+python -m movie_maker_tool resume <job_id>
 ```
 
 ## 給 AI Agent 使用（Skill）
 
 除了人用的 CLI 與 GUI，本專案也包成了 skill，讓 AI agent 能可靠地呼叫。
 
-Skill 放在 `.claude/skills/seedance-video/`，在這個專案目錄下工作的 agent 會自動看到它。要讓所有專案都能用，複製到使用者層級即可：
+Skill 放在 `.claude/skills/movie-maker-tool/`，在這個專案目錄下工作的 agent 會自動看到它。要讓所有專案都能用，複製到使用者層級即可：
 
 ```bash
-cp -r .claude/skills/seedance-video ~/.claude/skills/
+cp -r .claude/skills/movie-maker-tool ~/.claude/skills/
 ```
 
-另有打包好的 `seedance-video.skill`（就是上面那個資料夾的壓縮檔），可用於安裝到其他環境或分享。
+另有打包好的 `movie-maker-tool.skill`（就是上面那個資料夾的壓縮檔），可用於安裝到其他環境或分享。
 
 ### `--json` 模式
 
 Skill 之所以能可靠運作，靠的是 CLI 的機器可讀輸出。`gen`、`batch`、`resume`、`models` 都支援 `--json`：
 
 ```bash
-python -m seedance gen "提示詞" --duration 5 --json --dry-run
+python -m movie_maker_tool gen "提示詞" --duration 5 --json --dry-run
 ```
 
 約定是 **stdout 只有一個 JSON 物件，進度訊息全部走 stderr**，呼叫端可以直接 `json.loads(stdout)`。成功時 `ok: true`；失敗時 `ok: false`、`error.type` 是錯誤類別名稱、離開碼為 1。逾時錯誤還會附上 `job_id` 與 `recoverable_with: "resume"`，讓呼叫端知道那筆已計費、可以取件而不必重新生成。
@@ -206,7 +206,7 @@ Windows（需先裝好 Python 3.9+，安裝時勾選 "Add python.exe to PATH"）
 build_windows.bat
 ```
 
-各自產出 `dist/Seedance.app`（macOS）或 `dist/Seedance.exe`（Windows）。**打包只能在對應系統上做**，這台機器做出的 App 不能拿去另一個作業系統用，Windows 版要在 Windows 機器上另外跑一次 `build_windows.bat`。
+各自產出 `dist/MovieMakerTool.app`（macOS）或 `dist/MovieMakerTool.exe`（Windows）。**打包只能在對應系統上做**，這台機器做出的 App 不能拿去另一個作業系統用，Windows 版要在 Windows 機器上另外跑一次 `build_windows.bat`。
 
 執行檔會把 `.env`、`outputs/`、`jobs/`、`.cache/` 放在**執行檔所在的資料夾**（而不是專案原始碼目錄），所以散布時把 `.env`（填好金鑰）跟執行檔放在同一個資料夾即可。
 
@@ -225,7 +225,7 @@ OpenRouter 的影片生成是非同步任務：
 ## 成本護欄
 
 預設單次 US$0.50，超過時 CLI 需加 `--yes`、GUI 會跳出確認框。門檻可用 `.env` 裡的
-`SEEDANCE_COST_LIMIT` 調整。計價方式見上面「費用怎麼算」。
+`MOVIE_MAKER_COST_LIMIT` 調整。計價方式見上面「費用怎麼算」。
 
 ## 產出
 
@@ -237,14 +237,14 @@ OpenRouter 的影片生成是非同步任務：
 
 | 檔案 | 用途 |
 |---|---|
-| `seedance/config.py` | `.env` 解析、金鑰查找、路徑與門檻 |
-| `seedance/capabilities.py` | 抓 `/videos/models`、快取、送單前驗參數 |
-| `seedance/cost.py` | token 估算、計價 SKU、成本護欄 |
-| `seedance/media.py` | 參考素材轉 content part、自動縮圖、大小上限 |
-| `seedance/client.py` | 送單 / 輪詢 / 下載、任務記錄 |
-| `seedance/runner.py` | 流程編排、批次、ffmpeg 合併 |
-| `seedance/cli.py` | 命令列介面 |
-| `seedance/gui.py` | Tkinter 圖形介面 |
+| `movie_maker_tool/config.py` | `.env` 解析、金鑰查找、路徑與門檻 |
+| `movie_maker_tool/capabilities.py` | 抓 `/videos/models`、快取、送單前驗參數 |
+| `movie_maker_tool/cost.py` | token 估算、計價 SKU、成本護欄 |
+| `movie_maker_tool/media.py` | 參考素材轉 content part、自動縮圖、大小上限 |
+| `movie_maker_tool/client.py` | 送單 / 輪詢 / 下載、任務記錄 |
+| `movie_maker_tool/runner.py` | 流程編排、批次、ffmpeg 合併 |
+| `movie_maker_tool/cli.py` | 命令列介面 |
+| `movie_maker_tool/gui.py` | Tkinter 圖形介面 |
 
 ## 已知限制
 

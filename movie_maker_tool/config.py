@@ -20,13 +20,13 @@ def _detect_project_root() -> Path:
 
     打包成 PyInstaller 執行檔後 __file__ 會落在解壓縮出來的暫存目錄，
     不是使用者能看到、能編輯 .env 的地方，所以改用「執行檔旁邊」的目錄：
-        - macOS .app：Contents/MacOS/seedance → 回推到 .app 外層的資料夾
+        - macOS .app：Contents/MacOS/MovieMakerTool → 回推到 .app 外層的資料夾
         - Windows/單一執行檔：執行檔所在資料夾
     """
     if getattr(sys, "frozen", False):
         exe_path = Path(sys.executable).resolve()
         if sys.platform == "darwin" and ".app/Contents/MacOS" in str(exe_path):
-            # .../SomeDir/Seedance.app/Contents/MacOS/seedance
+            # .../SomeDir/MovieMakerTool.app/Contents/MacOS/MovieMakerTool
             return exe_path.parents[3]
         return exe_path.parent
     return Path(__file__).resolve().parent.parent
@@ -104,14 +104,23 @@ def api_key_source(env_file: Path | None = None) -> str:
     return "未設定"
 
 
+COST_LIMIT_NAMES = ("MOVIE_MAKER_COST_LIMIT", "SEEDANCE_COST_LIMIT")
+
+
 def cost_limit_usd() -> float:
-    """成本護欄門檻，可用 SEEDANCE_COST_LIMIT 覆寫。"""
-    raw = parse_env_file().get("SEEDANCE_COST_LIMIT") or os.environ.get("SEEDANCE_COST_LIMIT")
-    if raw:
-        try:
-            return float(raw)
-        except ValueError:
-            pass
+    """成本護欄門檻，可用 MOVIE_MAKER_COST_LIMIT 覆寫。
+
+    工具改名前叫 SEEDANCE_COST_LIMIT，這裡仍然接受舊名。門檻若因為改名而
+    悄悄退回預設值，使用者可能在不知情的情況下被擋下或放行，所以寧可多讀一個鍵。
+    """
+    env_file = parse_env_file()
+    for name in COST_LIMIT_NAMES:
+        raw = env_file.get(name) or os.environ.get(name)
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                continue
     return DEFAULT_COST_LIMIT_USD
 
 

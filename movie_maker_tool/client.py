@@ -112,7 +112,7 @@ def redact(body: dict) -> dict:
     return out
 
 
-class SeedanceClient:
+class VideoClient:
     def __init__(self, api_key: str, *, base_url: str = API_BASE, timeout: int = 120):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -122,7 +122,7 @@ class SeedanceClient:
             {
                 "Authorization": "Bearer " + api_key,
                 "HTTP-Referer": SITE_URL,
-                "X-Title": "seedance-video-tool",
+                "X-Title": "movie-maker-tool",
             }
         )
 
@@ -194,7 +194,7 @@ class SeedanceClient:
                 raise JobTimeoutError(
                     job_id,
                     "等待逾時（%d 分鐘）。任務 %s 可能仍在執行，"
-                    "請用 python -m seedance resume %s 取件。" % (timeout_s // 60, job_id, job_id),
+                    "請用 python -m movie_maker_tool resume %s 取件。" % (timeout_s // 60, job_id, job_id),
                 )
 
             # 分段睡，GUI 按下「停止等待」才不用等滿一輪 30 秒才有反應。

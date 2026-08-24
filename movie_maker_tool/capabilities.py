@@ -285,7 +285,7 @@ def get_capabilities(model: str, *, force_refresh: bool = False) -> ModelCapabil
             return ModelCapabilities.from_dict(entry)
     raise ValidationError(
         f"在 OpenRouter 的影片模型清單中找不到 {model}。"
-        f"可用 `python -m seedance models` 列出目前支援的型號。"
+        f"可用 `python -m movie_maker_tool models` 列出目前支援的型號。"
     )
 
 

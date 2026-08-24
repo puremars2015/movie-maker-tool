@@ -1,10 +1,10 @@
 """命令列介面。
 
-    python -m seedance gen "提示詞" [選項]
-    python -m seedance batch scenes.json [--concurrency 3] [--concat final.mp4]
-    python -m seedance resume <job_id>
-    python -m seedance models [--refresh]
-    python -m seedance gui
+    python -m movie_maker_tool gen "提示詞" [選項]
+    python -m movie_maker_tool batch scenes.json [--concurrency 3] [--concat final.mp4]
+    python -m movie_maker_tool resume <job_id>
+    python -m movie_maker_tool models [--refresh]
+    python -m movie_maker_tool gui
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ from pathlib import Path
 from .capabilities import fetch_models, get_capabilities
 from .client import GenerationSpec, load_job_record
 from .config import DEFAULT_MODEL, api_key_source, cost_limit_usd, get_api_key
-from .errors import SeedanceError
+from .cost import pricing_basis
+from .errors import MovieMakerError
 from .runner import concat_videos, generate, generate_batch, load_scenes, prepare, resume
 
 
@@ -84,8 +85,8 @@ def _add_json_flag(parser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="seedance",
-        description="用 OpenRouter 的 Seedance 模型生成影片（CLI 與 GUI 共用同一套核心）。",
+        prog="movie-maker-tool",
+        description="透過 OpenRouter 生成影片，支援多個模型（CLI 與 GUI 共用同一套核心）。",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -348,7 +349,7 @@ def cmd_models(args) -> int:
                 "generate_audio": caps.generate_audio,
                 "seed": caps.seed,
                 "pricing_skus": caps.pricing_skus,
-                "pricing_basis": __import__("seedance.cost", fromlist=["x"]).pricing_basis(caps),
+                "pricing_basis": pricing_basis(caps),
                 "output_options": [
                     {"label": o.label, "size": o.size, "resolution": o.resolution,
                      "aspect_ratio": o.aspect_ratio, "width": o.width, "height": o.height}
@@ -378,7 +379,6 @@ def cmd_models(args) -> int:
         print("  首尾影格  ：%s" % (", ".join(caps.supported_frame_images) or "不支援"))
         print("  生成音訊  ：%s" % ("支援" if caps.generate_audio else "不支援"))
         print("  seed      ：%s" % ("支援" if caps.seed else "不支援"))
-        from .cost import pricing_basis
         basis = {"tokens": "依畫面大小（token）", "seconds": "依秒", "unknown": "無法辨識"}[pricing_basis(caps)]
         print("  計價方式  ：%s" % basis)
         print("  計價明細  ：%s" % caps.pricing_skus)
@@ -389,7 +389,7 @@ def cmd_models(args) -> int:
     print("共 %d 個影片模型：" % len(entries))
     for entry in entries:
         print("  %-34s %s" % (entry.get("id"), ", ".join(entry.get("supported_resolutions") or [])))
-    print("\n看單一型號細節：python -m seedance models --model %s" % DEFAULT_MODEL)
+    print("\n看單一型號細節：python -m movie_maker_tool models --model %s" % DEFAULT_MODEL)
     return 0
 
 
@@ -399,7 +399,7 @@ def cmd_project(args) -> int:
 
     command = getattr(args, "project_command", None)
     if not command:
-        print("用法：python -m seedance project {init|check|run|status} <檔案>")
+        print("用法：python -m movie_maker_tool project {init|check|run|status} <檔案>")
         return 1
 
     if command == "init":
@@ -549,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return handlers[args.command](args)
-    except SeedanceError as exc:
+    except MovieMakerError as exc:
         if _wants_json(args):
             payload = {
                 "ok": False,
@@ -566,5 +566,5 @@ def main(argv: list[str] | None = None) -> int:
         print("\n錯誤：%s" % exc, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("\n已中斷。若任務已送出，可用 python -m seedance resume <job_id> 取件。", file=sys.stderr)
+        print("\n已中斷。若任務已送出，可用 python -m movie_maker_tool resume <job_id> 取件。", file=sys.stderr)
         return 130

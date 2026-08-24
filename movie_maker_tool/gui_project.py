@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from . import cost as cost_module
 from .capabilities import ModelCapabilities, get_capabilities
 from .config import DEFAULT_MODEL, get_api_key
-from .errors import SeedanceError
+from .errors import MovieMakerError
 from .media import FILE_DIALOG_TYPES, is_url
 from .project import ProjectState, load_project, write_template
 from .project_runner import plan_project, run_project
@@ -252,7 +252,7 @@ class ProjectTab(ttk.Frame):
             return False
         try:
             self.project = load_project(path)
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             messagebox.showerror("專案檔有問題", str(exc))
             return False
 
@@ -331,7 +331,7 @@ class ProjectTab(ttk.Frame):
         def work() -> None:
             try:
                 self.messages.put(("project_caps", get_capabilities(model)))
-            except SeedanceError as exc:
+            except MovieMakerError as exc:
                 self.messages.put(("log", "載入 %s 的能力失敗：%s" % (model, exc)))
 
         threading.Thread(target=work, daemon=True).start()
@@ -343,7 +343,7 @@ class ProjectTab(ttk.Frame):
 
         try:
             caps = get_capabilities(model_id)
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             messagebox.showerror("載入模型失敗", str(exc))
             self._show_current_model()
             return
@@ -607,7 +607,7 @@ class ProjectTab(ttk.Frame):
                     reference_count=len(merged.get("references") or [])
                     + bool(merged.get("first_frame")) + bool(merged.get("last_frame")),
                 )
-            except (SeedanceError, ValueError, TypeError):
+            except (MovieMakerError, ValueError, TypeError):
                 continue
         return results
 
@@ -899,7 +899,7 @@ class ProjectTab(ttk.Frame):
         only = targets if self.picked_ids else None
         try:
             plan = plan_project(self.project, self.state, only=only)
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             messagebox.showerror("專案檢查未通過", str(exc))
             return
 
@@ -909,7 +909,7 @@ class ProjectTab(ttk.Frame):
 
         try:
             api_key = get_api_key()
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             messagebox.showerror("缺少金鑰", str(exc))
             return
 
@@ -947,7 +947,7 @@ class ProjectTab(ttk.Frame):
                     should_cancel=self.cancel_event.is_set,
                 )
                 self.messages.put(("done", result))
-            except SeedanceError as exc:
+            except MovieMakerError as exc:
                 self.messages.put(("error", str(exc)))
             except Exception as exc:
                 self.messages.put(("error", "未預期的錯誤：%r" % exc))

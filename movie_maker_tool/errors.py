@@ -3,23 +3,23 @@
 from __future__ import annotations
 
 
-class SeedanceError(Exception):
+class MovieMakerError(Exception):
     """本工具所有錯誤的基底類別。"""
 
 
-class ConfigError(SeedanceError):
+class ConfigError(MovieMakerError):
     """缺少 API 金鑰、.env 讀取失敗等設定問題。"""
 
 
-class ValidationError(SeedanceError):
+class ValidationError(MovieMakerError):
     """送單前的本地參數驗證失敗（例如秒數不在模型支援清單內）。"""
 
 
-class CostGuardError(SeedanceError):
+class CostGuardError(MovieMakerError):
     """預估成本超過護欄門檻，且未經確認。"""
 
 
-class ApiError(SeedanceError):
+class ApiError(MovieMakerError):
     """OpenRouter 回傳非 2xx。"""
 
     def __init__(self, status_code: int, message: str, payload=None):
@@ -29,7 +29,7 @@ class ApiError(SeedanceError):
         self.payload = payload
 
 
-class JobFailedError(SeedanceError):
+class JobFailedError(MovieMakerError):
     """任務進入 failed / cancelled / expired 終態。"""
 
     def __init__(self, status: str, message: str, job: dict | None = None):
@@ -39,7 +39,7 @@ class JobFailedError(SeedanceError):
         self.job = job or {}
 
 
-class JobTimeoutError(SeedanceError):
+class JobTimeoutError(MovieMakerError):
     """輪詢超過時限仍未完成（任務可能仍在雲端執行，可用 resume 取件）。"""
 
     def __init__(self, job_id: str, message: str):

@@ -18,9 +18,9 @@ from typing import Callable, Iterable
 
 from . import cost as cost_module
 from .capabilities import ModelCapabilities, get_capabilities
-from .client import GenerationSpec, SeedanceClient, build_request, load_job_record, redact, save_job_record
+from .client import GenerationSpec, VideoClient, build_request, load_job_record, redact, save_job_record
 from .config import DEFAULT_MODEL, OUTPUT_DIR, cost_limit_usd, ensure_dirs
-from .errors import SeedanceError, ValidationError
+from .errors import MovieMakerError, ValidationError
 from .media import has_video_reference
 
 Logger = Callable[[str], None]
@@ -119,7 +119,7 @@ def generate(
     log(estimate.format())
     cost_module.check_guard(estimate, cost_limit_usd(), approved=approved)
 
-    client = SeedanceClient(api_key)
+    client = VideoClient(api_key)
     log("送出任務…")
     job = client.submit(body)
     job_id = job.get("id")
@@ -168,7 +168,7 @@ def resume(
     ensure_dirs()
     output_dir = Path(output_dir or OUTPUT_DIR)
     record = load_job_record(job_id)
-    client = SeedanceClient(api_key)
+    client = VideoClient(api_key)
 
     log("查詢任務 %s…" % job_id)
     status = client.poll(record if record.get("polling_url") else job_id)
@@ -263,7 +263,7 @@ def generate_batch(
                 log=lambda message: log("%s %s" % (prefix, message)),
                 output_dir=output_dir,
             )
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             log("%s 失敗：%s" % (prefix, exc))
             return index, exc
 

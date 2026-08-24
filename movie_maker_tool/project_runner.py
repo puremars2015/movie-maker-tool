@@ -21,7 +21,7 @@ from typing import Callable
 from . import cost as cost_module
 from .capabilities import ModelCapabilities, get_capabilities
 from .config import cost_limit_usd, ensure_dirs
-from .errors import SeedanceError, ValidationError
+from .errors import MovieMakerError, ValidationError
 from .project import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -115,7 +115,7 @@ def plan_project(
 
         try:
             _, _, estimate = prepare(spec, caps=caps, build_body=False)
-        except SeedanceError as exc:
+        except MovieMakerError as exc:
             raise ValidationError("分鏡 %s：%s" % (scene.id, exc)) from exc
 
         # prepare 會把預設值補進 spec，寫回 scene 讓後續執行沿用同一組參數。
@@ -258,7 +258,7 @@ def run_project(
                 scene_id = running.pop(future)
                 try:
                     outcome = future.result()
-                except SeedanceError as exc:
+                except MovieMakerError as exc:
                     stop = True
                     state.mark(scene_id, status=STATUS_FAILED, error=str(exc))
                     result.failed.append((scene_id, str(exc)))

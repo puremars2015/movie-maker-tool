@@ -242,7 +242,7 @@ def check_guard(cost: CostEstimate, limit_usd: float, *, approved: bool) -> None
         return
     raise CostGuardError(
         f"預估花費 US${cost.usd:.3f} 超過門檻 US${limit_usd:.2f}。\n"
-        f"CLI 請加 --yes 確認，或用 SEEDANCE_COST_LIMIT 調整門檻。"
+        f"CLI 請加 --yes 確認，或用 MOVIE_MAKER_COST_LIMIT 調整門檻。"
     )
 
 
