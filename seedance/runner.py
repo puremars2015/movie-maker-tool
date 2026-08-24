@@ -66,8 +66,13 @@ def prepare(
     if not spec.duration:
         spec.duration = caps.default_duration()
     if not (spec.size or spec.resolution or spec.aspect_ratio):
-        # 明確帶上尺寸，估價與實際輸出才會一致，不會落到供應商的預設值。
-        spec.size = caps.default_size()
+        # 明確帶上輸出規格，估價與實際輸出才會一致，不會落到供應商的預設值。
+        # 有些模型（例如 MiniMax H3）沒有明確尺寸清單，只吃 resolution + aspect_ratio。
+        option = caps.default_output()
+        if option:
+            spec.size = option.size
+            spec.resolution = option.resolution
+            spec.aspect_ratio = option.aspect_ratio
 
     caps.validate(
         duration=spec.duration,
@@ -79,13 +84,16 @@ def prepare(
         frame_types=spec.frame_types(),
     )
 
-    size = spec.size or _size_from(caps, spec.resolution, spec.aspect_ratio)
     estimate = cost_module.estimate(
         caps,
-        size=size,
         duration=spec.duration,
+        size=spec.size,
+        resolution=spec.resolution,
+        aspect_ratio=spec.aspect_ratio,
         generate_audio=spec.generate_audio,
         has_video_input=has_video_reference(spec.references),
+        # 按張計價的模型（H3）把首尾影格也算成參考圖；寧可高估。
+        reference_count=len(spec.references) + len(spec.frame_types()),
     )
     body = build_request(spec, log=log) if build_body else {}
     return caps, body, estimate
@@ -306,29 +314,15 @@ def concat_videos(paths: list[Path], dest: Path, *, log: Logger = print) -> Path
 # --- 小工具 -----------------------------------------------------------
 
 
-def _size_from(caps: ModelCapabilities, resolution: str | None, aspect_ratio: str | None) -> str:
-    """沒給 size 時，從 resolution + aspect_ratio 推回實際像素，好估價。"""
-    if resolution and aspect_ratio:
-        try:
-            ratio_w, ratio_h = (int(v) for v in aspect_ratio.split(":"))
-        except ValueError:
-            ratio_w, ratio_h = 16, 9
-        for size in caps.supported_sizes:
-            width, height = (int(v) for v in size.lower().split("x"))
-            if abs((width / height) - (ratio_w / ratio_h)) < 0.02 and _matches_resolution(width, height, resolution):
-                return size
-    return caps.default_size()
-
-
-def _matches_resolution(width: int, height: int, resolution: str) -> bool:
-    target = re.sub(r"[^0-9]", "", resolution)
-    return bool(target) and min(width, height) == int(target)
-
-
 def _filename(spec: GenerationSpec, job_id: str, estimate: cost_module.CostEstimate) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     label = _slug(spec.name or spec.prompt or "video")
-    return "%s_%s_%dx%d_%ds.mp4" % (stamp, label, estimate.width, estimate.height, spec.duration)
+    # 依秒計價的模型沒有明確像素尺寸，改用它自己的規格描述當檔名的一部分。
+    if estimate.width and estimate.height:
+        spec_label = "%dx%d" % (estimate.width, estimate.height)
+    else:
+        spec_label = _slug("-".join(v for v in (spec.resolution, spec.aspect_ratio) if v) or "auto", 16)
+    return "%s_%s_%s_%ds.mp4" % (stamp, label, spec_label, spec.duration)
 
 
 def _slug(text: str, limit: int = 32) -> str:

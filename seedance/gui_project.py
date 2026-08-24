@@ -18,8 +18,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import cost as cost_module
-from .capabilities import ModelCapabilities
-from .config import get_api_key
+from .capabilities import ModelCapabilities, get_capabilities
+from .config import DEFAULT_MODEL, get_api_key
 from .errors import SeedanceError
 from .media import FILE_DIALOG_TYPES, is_url
 from .project import ProjectState, load_project, write_template
@@ -40,6 +40,9 @@ class ProjectTab(ttk.Frame):
         self.cast_vars: dict[str, tk.BooleanVar] = {}
         self.scene_refs: list[str] = []          # 目前這一鏡的專屬素材
         self.picked_ids: set[str] = set()        # 勾選要轉出的分鏡；空的代表全部未完成
+        self.model_choices: list[tuple[str, str]] = []
+        self.project_caps = None                 # 依專案自己的模型載入，不跟單支分頁共用
+        self.output_options: list = []
         self.messages: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
@@ -57,6 +60,13 @@ class ProjectTab(ttk.Frame):
         ttk.Button(top, text="儲存", command=self._save).pack(side="left")
         self.path_var = tk.StringVar(value="尚未開啟專案")
         ttk.Label(top, textvariable=self.path_var, foreground="#666").pack(side="left", padx=10)
+
+        # 專案有自己的模型，不跟單支分頁共用——兩邊可以同時在做不同的事。
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(top, textvariable=self.model_var, state="readonly", width=30)
+        self.model_combo.pack(side="right")
+        self.model_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_model_change())
+        ttk.Label(top, text="模型").pack(side="right", padx=(0, 4))
 
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
@@ -129,7 +139,7 @@ class ProjectTab(ttk.Frame):
         self.duration_combo.grid(row=row, column=1, sticky="ew", pady=3)
 
         row += 1
-        ttk.Label(editor, text="長寬（像素）").grid(row=row, column=0, sticky="w", pady=3)
+        ttk.Label(editor, text="輸出規格").grid(row=row, column=0, sticky="w", pady=3)
         self.size_var = tk.StringVar()
         self.size_combo = ttk.Combobox(editor, textvariable=self.size_var, state="readonly")
         self.size_combo.grid(row=row, column=1, sticky="ew", pady=3)
@@ -143,8 +153,8 @@ class ProjectTab(ttk.Frame):
 
         row += 1
         self.audio_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(editor, text="生成音訊", variable=self.audio_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=3)
+        self.audio_check = ttk.Checkbutton(editor, text="生成音訊", variable=self.audio_var)
+        self.audio_check.grid(row=row, column=0, columnspan=2, sticky="w", pady=3)
 
         row += 1
         cast_header = ttk.Frame(editor)
@@ -250,6 +260,9 @@ class ProjectTab(ttk.Frame):
         self.scenes = [dict(s) for s in (self.project.raw.get("scenes") or [])]
         self.current_index = None
         self.path_var.set(str(self.project.path))
+        self.project_caps = None
+        self._show_current_model()
+        self._load_project_caps_async(self._project_model())
         self._build_cast_checkboxes()
         self._refresh_options()
         self._refresh_table()
@@ -285,11 +298,137 @@ class ProjectTab(ttk.Frame):
 
     # --- 表格 ---------------------------------------------------------
 
+    def _caps(self):
+        """優先用專案自己的模型能力；還沒載入時退回單支分頁的，至少讓畫面有東西。"""
+        return self.project_caps or self.caps_provider()
+
+    def set_model_choices(self, choices) -> None:
+        self.model_choices = list(choices)
+        self.model_combo["values"] = [label for _, label in self.model_choices]
+        self._show_current_model()
+
+    def _show_current_model(self) -> None:
+        current = self._project_model()
+        for model_id, label in self.model_choices:
+            if model_id == current:
+                self.model_var.set(label)
+                return
+        self.model_var.set(current or "")
+
+    def _project_model(self) -> str:
+        if not self.project:
+            return ""
+        return (self.project.defaults or {}).get("model") or DEFAULT_MODEL
+
+    def _selected_model_id(self):
+        label = self.model_var.get()
+        for model_id, text in self.model_choices:
+            if text == label:
+                return model_id
+        return None
+
+    def _load_project_caps_async(self, model: str) -> None:
+        def work() -> None:
+            try:
+                self.messages.put(("project_caps", get_capabilities(model)))
+            except SeedanceError as exc:
+                self.messages.put(("log", "載入 %s 的能力失敗：%s" % (model, exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_model_change(self) -> None:
+        model_id = self._selected_model_id()
+        if not self.project or not model_id or model_id == self._project_model():
+            return
+
+        try:
+            caps = get_capabilities(model_id)
+        except SeedanceError as exc:
+            messagebox.showerror("載入模型失敗", str(exc))
+            self._show_current_model()
+            return
+
+        # 換模型會讓既有分鏡的尺寸、秒數等設定失效，先算出要改什麼再問。
+        self._flush_editor()
+        changes = self._plan_model_migration(caps)
+        if changes and not messagebox.askyesno(
+            "換模型需要調整分鏡",
+            "改用 %s 之後，這些設定必須跟著調整：\n\n%s\n\n要套用嗎？"
+            % (caps.name or caps.id, "\n".join(changes[:12])
+               + ("\n…共 %d 項" % len(changes) if len(changes) > 12 else "")),
+        ):
+            self._show_current_model()
+            return
+
+        self._apply_model_migration(caps)
+        self.project.defaults["model"] = caps.id
+        self.project.raw.setdefault("defaults", {})["model"] = caps.id
+        self.project_caps = caps
+        for line in changes:
+            self._log("  " + line)
+        self._log("已改用 %s，記得按儲存。" % caps.id)
+        self._refresh_options()
+        self._refresh_table()
+        if self.current_index is not None and self.current_index < len(self.scenes):
+            self._load_editor(self.scenes[self.current_index])
+
+    def _plan_model_migration(self, caps) -> list[str]:
+        """列出換成 caps 之後必須調整的設定。只描述，不動資料。"""
+        changes: list[str] = []
+        default_option = caps.default_output()
+        blocks = [("defaults", self.project.defaults or {})]
+        blocks += [(s.get("id", "?"), s) for s in self.scenes]
+
+        for name, block in blocks:
+            size = block.get("size")
+            if size and not caps.uses_explicit_sizes:
+                changes.append("%s：移除 size %s，改用 %s" % (name, size, default_option.label if default_option else "預設"))
+            elif size and size not in caps.supported_sizes:
+                changes.append("%s：size %s 不支援，改為 %s" % (name, size, default_option.size if default_option else "預設"))
+
+            duration = block.get("duration")
+            if duration and caps.supported_durations and int(duration) not in caps.supported_durations:
+                changes.append("%s：秒數 %s 不支援，改為 %d" % (name, duration, _nearest(int(duration), caps.supported_durations)))
+
+            if block.get("generate_audio") and not caps.generate_audio:
+                changes.append("%s：關閉音訊（此模型不支援）" % name)
+            if block.get("seed") is not None and not caps.seed:
+                changes.append("%s：移除 seed（此模型不支援）" % name)
+        return changes
+
+    def _apply_model_migration(self, caps) -> None:
+        default_option = caps.default_output()
+        for block in [self.project.defaults or {}] + self.scenes:
+            size = block.get("size")
+            if size and (not caps.uses_explicit_sizes or size not in caps.supported_sizes):
+                block.pop("size", None)
+                if default_option:
+                    if default_option.size:
+                        block["size"] = default_option.size
+                    else:
+                        block["resolution"] = default_option.resolution
+                        block["aspect_ratio"] = default_option.aspect_ratio
+
+            duration = block.get("duration")
+            if duration and caps.supported_durations and int(duration) not in caps.supported_durations:
+                block["duration"] = _nearest(int(duration), caps.supported_durations)
+
+            if block.get("generate_audio") and not caps.generate_audio:
+                block["generate_audio"] = False
+            if block.get("seed") is not None and not caps.seed:
+                block.pop("seed", None)
+
+        self.project.raw["defaults"] = self.project.defaults
+
     def _refresh_options(self) -> None:
-        caps: ModelCapabilities | None = self.caps_provider()
+        caps: ModelCapabilities | None = self._caps()
         if caps:
             self.duration_combo["values"] = [str(d) for d in caps.supported_durations]
-            self.size_combo["values"] = caps.sorted_sizes()
+            self.output_options = caps.output_options()
+            self.size_combo["values"] = [o.label for o in self.output_options]
+            self.audio_check.configure(state="normal" if caps.generate_audio else "disabled")
+            if not caps.generate_audio:
+                self.audio_var.set(False)
 
         # 不要把自己列進「接續自」——選了會被忽略，使用者只會看到沒反應。
         current_id = None
@@ -307,13 +446,16 @@ class ProjectTab(ttk.Frame):
         self._prune_picks()
         targets = self._target_ids()
         total = 0.0
+        expected = 0.0
 
         for index, scene in enumerate(self.scenes):
             scene_id = scene.get("id", "s%02d" % (index + 1))
             done = bool(self.state and self.state.is_done(scene_id))
             status = "done" if done else (self.state.status_of(scene_id) if self.state else "pending")
-            if scene_id in targets:
-                total += estimates.get(scene_id, 0.0)
+            estimate = estimates.get(scene_id)
+            if scene_id in targets and estimate:
+                total += estimate.usd
+                expected += estimate.expected_usd
 
             self.tree.insert("", "end", iid=str(index), values=(
                 "☑" if scene_id in self.picked_ids else "☐",
@@ -322,16 +464,18 @@ class ProjectTab(ttk.Frame):
                 scene.get("duration", self.project.defaults.get("duration", "")),
                 "、".join(scene.get("cast") or []),
                 scene.get("continue_from") or "",
-                "US$%.3f" % estimates.get(scene_id, 0.0) if scene_id in estimates else "—",
+                ("US$%.3f" % estimate.usd) if estimate else "—",
                 (scene.get("prompt") or "")[:60],
             ))
 
         spent = self.state.total_cost() if self.state else 0.0
         scope = "勾選 %d 鏡" % len(targets) if self.picked_ids else "待生成 %d 鏡" % len(targets)
-        self.summary_var.set(
-            "%s，預估上限 US$%.3f（實際約 US$%.3f）｜已花費 US$%.4f"
-            % (scope, total, total * 0.416, spent)
-        )
+        # 有實測折扣的模型才顯示預期金額；沒量過的直接顯示牌價，不要讓人以為比較便宜。
+        if abs(expected - total) > 1e-9:
+            money = "牌價 US$%.3f（依實測折扣預期約 US$%.3f）" % (total, expected)
+        else:
+            money = "預估 US$%.3f" % total
+        self.summary_var.set("%s，%s｜已花費 US$%.4f" % (scope, money, spent))
         if getattr(self, "run_button", None):
             self.run_button.configure(
                 text="轉出勾選的 %d 鏡" % len(targets) if self.picked_ids else "開始轉出"
@@ -403,7 +547,7 @@ class ProjectTab(ttk.Frame):
             queue_.append(dep)
         return needed
 
-    def _estimates(self) -> dict[str, float]:
+    def _estimates(self) -> dict:
         """逐鏡估價。
 
         刻意直接從編輯中的 self.scenes 算，而不是從已載入的 Project 物件——
@@ -412,7 +556,7 @@ class ProjectTab(ttk.Frame):
         """
         if not self.project:
             return {}
-        caps = self.caps_provider()
+        caps = self._caps()
         if not caps:
             return {}
 
@@ -421,17 +565,43 @@ class ProjectTab(ttk.Frame):
             scene_id = scene.get("id", "s%02d" % (index + 1))
             merged = {**self.project.defaults, **scene}
             try:
+                option = caps.default_output()
                 results[scene_id] = cost_module.estimate(
                     caps,
-                    size=merged.get("size") or caps.default_size(),
                     duration=int(merged.get("duration") or caps.default_duration()),
+                    size=merged.get("size") or (option.size if option else None),
+                    resolution=merged.get("resolution") or (option.resolution if option else None),
+                    aspect_ratio=merged.get("aspect_ratio") or (option.aspect_ratio if option else None),
                     generate_audio=bool(merged.get("generate_audio")),
-                ).usd
+                    reference_count=len(merged.get("references") or [])
+                    + bool(merged.get("first_frame")) + bool(merged.get("last_frame")),
+                )
             except (SeedanceError, ValueError, TypeError):
                 continue
         return results
 
     # --- 編輯 ---------------------------------------------------------
+
+    def _option_by_label(self, label: str):
+        for option in self.output_options:
+            if option.label == label:
+                return option
+        return None
+
+    def _option_label(self, scene: dict, defaults: dict) -> str:
+        """把分鏡目前的規格對回下拉選單的標籤。"""
+        size = scene.get("size") or defaults.get("size")
+        if size:
+            for option in self.output_options:
+                if option.size == size:
+                    return option.label
+        resolution = scene.get("resolution") or defaults.get("resolution")
+        aspect = scene.get("aspect_ratio") or defaults.get("aspect_ratio")
+        if resolution:
+            for option in self.output_options:
+                if option.resolution == resolution and option.aspect_ratio == aspect:
+                    return option.label
+        return self.output_options[0].label if self.output_options else ""
 
     def _build_cast_checkboxes(self) -> None:
         for child in self.cast_frame.winfo_children():
@@ -469,7 +639,7 @@ class ProjectTab(ttk.Frame):
         self.prompt_text.insert("1.0", scene.get("prompt", ""))
         self.id_var.set(scene.get("id", ""))
         self.duration_var.set(str(scene.get("duration") or defaults.get("duration", 5)))
-        self.size_var.set(scene.get("size") or defaults.get("size", ""))
+        self.size_var.set(self._option_label(scene, defaults))
         self.chain_var.set(scene.get("continue_from") or "（不接續）")
         self.audio_var.set(bool(scene.get("generate_audio", defaults.get("generate_audio", False))))
         selected = set(scene.get("cast") or [])
@@ -496,8 +666,12 @@ class ProjectTab(ttk.Frame):
 
         if self.duration_var.get().isdigit():
             scene["duration"] = int(self.duration_var.get())
-        if self.size_var.get():
-            scene["size"] = self.size_var.get()
+        option = self._option_by_label(self.size_var.get())
+        if option:
+            # 依模型還原：有明確尺寸就寫 size，否則寫 resolution + aspect_ratio。
+            for key in ("size", "resolution", "aspect_ratio"):
+                scene.pop(key, None)
+            scene.update(option.as_request_fields())
         scene["generate_audio"] = bool(self.audio_var.get())
 
         chain = self.chain_var.get()
@@ -710,9 +884,14 @@ class ProjectTab(ttk.Frame):
 
         if not messagebox.askyesno(
             "確認費用",
-            "本次要生成 %d 鏡（%s）。\n\n預估上限 US$%.3f，依目前折扣實際約 US$%.3f。\n\n"
+            "本次要生成 %d 鏡（%s）%s。\n\n%s\n\n"
             "送出後即計費且無法取消，要開始嗎？"
-            % (len(plan.todo), "、".join(plan.todo), plan.todo_cost, plan.todo_cost * 0.416),
+            % (len(plan.todo), "、".join(plan.todo),
+               "，其餘分鏡不會動到" if self.picked_ids else "",
+               ("牌價 US$%.3f，依實測折扣預期約 US$%.3f"
+                % (plan.todo_cost, plan.todo_expected))
+               if abs(plan.todo_expected - plan.todo_cost) > 1e-9
+               else ("預估 US$%.3f" % plan.todo_cost)),
         ):
             self._log("已取消（未送出，不計費）。")
             return
@@ -755,6 +934,11 @@ class ProjectTab(ttk.Frame):
                 kind, payload = self.messages.get_nowait()
                 if kind == "log":
                     self._log(str(payload))
+                elif kind == "project_caps":
+                    self.project_caps = payload
+                    self._refresh_options()
+                    self._refresh_table()
+                    self._log("專案模型：%s" % getattr(payload, "id", payload))
                 elif kind == "done":
                     self._finish(payload)
                 elif kind == "error":
@@ -937,3 +1121,8 @@ class CastDialog(tk.Toplevel):
         self.project.raw["cast"] = cast     # 存檔時是從 raw 寫回去的
         self.parent_tab._on_cast_changed(self.renames)
         self.destroy()
+
+
+def _nearest(value: int, options) -> int:
+    """挑最接近的合法秒數。換模型時把不支援的秒數自動貼過去，比直接報錯好用。"""
+    return min(options, key=lambda o: (abs(o - value), o))

@@ -56,14 +56,21 @@ def _logger(args):
 
 def _estimate_payload(estimate) -> dict:
     return {
+        "model": estimate.model,
+        "basis": estimate.basis,             # tokens：依畫面大小；seconds：依秒
+        "sku": estimate.sku,
+        "detail": estimate.detail,
+        "list_price_usd": round(estimate.usd, 6),
+        "expected_usd": round(estimate.expected_usd, 6),
+        "discount": estimate.discount,
         "tokens": estimate.tokens,
         "price_per_token": estimate.price_per_token,
-        "list_price_usd": round(estimate.usd, 6),
-        "sku": estimate.sku,
         "width": estimate.width,
         "height": estimate.height,
         "duration": estimate.duration,
-        "note": "牌價上限，未計促銷折扣；實際扣款以 usage.cost 為準",
+        "reference_count": estimate.reference_count,
+        "note": "list_price_usd 是牌價；expected_usd 只在該模型有實測折扣時才較低。"
+                "實際扣款一律以 usage.cost 為準",
     }
 
 
@@ -160,11 +167,9 @@ def cmd_gen(args) -> int:
         name=args.name,
     )
 
+    # 秒數與輸出規格的預設值由 prepare() 依模型能力填，這裡不要重複判斷——
+    # 不同模型的預設不一樣（有的用 size，有的用 resolution + aspect_ratio）。
     caps = get_capabilities(spec.model)
-    if not spec.duration:
-        spec.duration = caps.default_duration()
-    if not (spec.size or spec.resolution or spec.aspect_ratio):
-        spec.size = caps.default_size()
 
     log = _logger(args)
     over_guard_note = "超過成本護欄 US$%.2f，實際執行時需要加 --yes" % cost_limit_usd()
@@ -181,6 +186,8 @@ def cmd_gen(args) -> int:
                 "validated": True,
                 "model": spec.model,
                 "size": spec.size,
+                "resolution": spec.resolution,
+                "aspect_ratio": spec.aspect_ratio,
                 "duration": spec.duration,
                 "generate_audio": spec.generate_audio,
                 "reference_count": len(spec.references),
@@ -341,7 +348,14 @@ def cmd_models(args) -> int:
                 "generate_audio": caps.generate_audio,
                 "seed": caps.seed,
                 "pricing_skus": caps.pricing_skus,
+                "pricing_basis": __import__("seedance.cost", fromlist=["x"]).pricing_basis(caps),
+                "output_options": [
+                    {"label": o.label, "size": o.size, "resolution": o.resolution,
+                     "aspect_ratio": o.aspect_ratio, "width": o.width, "height": o.height}
+                    for o in caps.output_options()
+                ],
                 "default_size": caps.default_size(),
+                "default_output": (caps.default_output().label if caps.default_output() else None),
                 "default_duration": caps.default_duration(),
             })
         return _emit(args, {
@@ -359,13 +373,17 @@ def cmd_models(args) -> int:
         print("%s（%s）" % (caps.name or caps.id, caps.id))
         print("  解析度    ：%s" % ", ".join(caps.supported_resolutions))
         print("  長寬比    ：%s" % ", ".join(caps.supported_aspect_ratios))
-        print("  尺寸      ：%s" % ", ".join(caps.sorted_sizes()))
+        print("  尺寸      ：%s" % (", ".join(caps.sorted_sizes()) or "（此模型不指定明確尺寸，用解析度＋長寬比）"))
         print("  秒數      ：%s" % ", ".join(str(d) for d in caps.supported_durations))
         print("  首尾影格  ：%s" % (", ".join(caps.supported_frame_images) or "不支援"))
         print("  生成音訊  ：%s" % ("支援" if caps.generate_audio else "不支援"))
         print("  seed      ：%s" % ("支援" if caps.seed else "不支援"))
-        print("  計價      ：%s" % caps.pricing_skus)
-        print("  預設尺寸  ：%s（本工具挑的最低解析度手機直式）" % caps.default_size())
+        from .cost import pricing_basis
+        basis = {"tokens": "依畫面大小（token）", "seconds": "依秒", "unknown": "無法辨識"}[pricing_basis(caps)]
+        print("  計價方式  ：%s" % basis)
+        print("  計價明細  ：%s" % caps.pricing_skus)
+        option = caps.default_output()
+        print("  預設規格  ：%s（本工具挑的最低解析度手機直式）" % (option.label if option else "—"))
         return 0
 
     print("共 %d 個影片模型：" % len(entries))
@@ -414,7 +432,7 @@ def cmd_project(args) -> int:
                 "id": e.scene_id,
                 "already_done": e.already_done,
                 "list_price_usd": round(e.estimate.usd, 6),
-                "size": "%dx%d" % (e.estimate.width, e.estimate.height),
+                "size": e.estimate.spec_label,
                 "duration": e.estimate.duration,
             }
             for e in plan.estimates
@@ -429,6 +447,7 @@ def cmd_project(args) -> int:
                 "todo": plan.todo,
                 "skipped": plan.skipped,
                 "todo_list_price_usd": round(plan.todo_cost, 6),
+                "todo_expected_usd": round(plan.todo_expected, 6),
                 "total_list_price_usd": round(plan.total_cost, 6),
                 "cost_limit_usd": cost_limit_usd(),
                 "exceeds_cost_limit": plan.todo_cost > cost_limit_usd(),
@@ -439,8 +458,11 @@ def cmd_project(args) -> int:
             mark = "✓ 已完成" if row["already_done"] else "  待生成"
             print("  %-8s %s  %-10s %2d秒  US$%.3f" % (
                 row["id"], mark, row["size"], row["duration"], row["list_price_usd"]))
-        print("本次需生成 %d 鏡，預估上限 US$%.3f（實際約四成，US$%.3f）" % (
-            len(plan.todo), plan.todo_cost, plan.todo_cost * 0.416))
+        if abs(plan.todo_expected - plan.todo_cost) > 1e-9:
+            print("本次需生成 %d 鏡，牌價 US$%.3f，依實測折扣預期約 US$%.3f" % (
+                len(plan.todo), plan.todo_cost, plan.todo_expected))
+        else:
+            print("本次需生成 %d 鏡，預估 US$%.3f" % (len(plan.todo), plan.todo_cost))
         if plan.todo_cost > cost_limit_usd():
             print("注意：超過成本護欄 US$%.2f，執行時需要加 --yes" % cost_limit_usd())
         return 0

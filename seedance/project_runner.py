@@ -61,6 +61,13 @@ class ProjectPlan:
         return sum(e.estimate.usd for e in self.estimates if e.scene_id not in done)
 
     @property
+    def todo_expected(self) -> float:
+        """預期實際扣款。逐鏡套各自模型的實測折扣——專案可以混用不同模型，
+        整批乘同一個係數會算錯。"""
+        done = set(self.skipped)
+        return sum(e.estimate.expected_usd for e in self.estimates if e.scene_id not in done)
+
+    @property
     def total_cost(self) -> float:
         return sum(e.estimate.usd for e in self.estimates)
 
@@ -205,7 +212,11 @@ def run_project(
         result.concat_path = _maybe_concat(project, state, log=log)
         return result
 
-    log("本次要生成 %d 鏡，預估上限 US$%.3f（牌價，實際約四成）" % (len(plan.todo), plan.todo_cost))
+    if abs(plan.todo_expected - plan.todo_cost) > 1e-9:
+        log("本次要生成 %d 鏡，牌價 US$%.3f，依實測折扣預期約 US$%.3f"
+            % (len(plan.todo), plan.todo_cost, plan.todo_expected))
+    else:
+        log("本次要生成 %d 鏡，預估 US$%.3f" % (len(plan.todo), plan.todo_cost))
     limit = cost_limit_usd()
     if not approved and plan.todo_cost > limit:
         raise cost_module.CostGuardError(

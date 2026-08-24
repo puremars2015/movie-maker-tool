@@ -138,12 +138,18 @@
   "generate_audio": false,
   "reference_count": 2,
   "estimate": {
+    "model": "bytedance/seedance-2.0-mini",
+    "basis": "tokens",
+    "sku": "video_tokens_without_audio",
+    "detail": "480x854 × 5 秒 = 48,037 tokens × $0.0000035",
+    "list_price_usd": 0.168129,
+    "expected_usd": 0.069942,
+    "discount": 0.416,
     "tokens": 48037,
     "price_per_token": 3.5e-06,
-    "list_price_usd": 0.168129,
-    "sku": "video_tokens_without_audio",
     "width": 480, "height": 854, "duration": 5,
-    "note": "牌價上限，未計促銷折扣；實際扣款以 usage.cost 為準"
+    "reference_count": 0,
+    "note": "list_price_usd 是牌價；expected_usd 只在該模型有實測折扣時才較低"
   },
   "cost_limit_usd": 0.5,
   "exceeds_cost_limit": false,
@@ -265,3 +271,26 @@ OpenRouter 的影片生成是非同步任務：
 - 參考素材走 base64 內嵌，請求體總量上限 24 MB。素材多時改用公開 HTTPS 網址。
 - 影片與音訊參考只有 Seedance 2 代以上的模型會採用，其他模型忽略。
 - 影片生成不支援 Zero Data Retention。
+
+
+## 模型與計價
+
+`basis` 有兩種：
+
+- `tokens` — 依畫面大小計價（Seedance 系列）。`tokens`、`price_per_token`、`width`、
+  `height` 有值。
+- `seconds` — 依秒計價（H3、Kling、Hailuo、Wan 等）。費用與畫面大小無關；H3 另外
+  按 `reference_count` 每張 $0.04 加價。
+
+認不出計價方式的模型會回傳 `ValidationError` 而不是估成 0。
+
+`models --model <id> --json` 另外會回傳：
+
+- `pricing_basis` — 同上
+- `output_options` — 該模型可用的輸出規格清單，每項含 `label` / `size` /
+  `resolution` / `aspect_ratio` / `width` / `height`。**送單時照著填**：有 `size` 就送
+  `size`，否則送 `resolution` + `aspect_ratio`。
+- `default_output` — 本工具挑的預設（最低解析度手機直式）
+
+換模型時要一併檢查 `supported_durations`、`seed`、`generate_audio` 有沒有變，
+以及原本的 `size` 在新模型下還合不合法。

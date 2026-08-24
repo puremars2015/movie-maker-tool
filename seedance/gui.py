@@ -38,6 +38,9 @@ class SeedanceApp:
         self.root.minsize(880, 680)
 
         self.caps: ModelCapabilities | None = None
+        self.project_tab = None
+        self.model_choices: list[tuple[str, str]] = []   # (model id, 顯示標籤)
+        self.output_options: list = []                   # 目前模型可選的輸出規格
         self.references: list[str] = []
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
@@ -117,7 +120,16 @@ class SeedanceApp:
         right.columnconfigure(1, weight=1)
 
         row = 0
-        ttk.Label(right, text="長寬（像素）").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(right, text="模型").grid(row=row, column=0, sticky="w", pady=4)
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(right, textvariable=self.model_var, state="readonly", width=18)
+        self.model_combo.grid(row=row, column=1, sticky="ew", pady=4)
+        self.model_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_model_change())
+
+        row += 1
+        # 各家描述輸出的方式不同：seedance 給明確像素尺寸，H3 只給解析度＋長寬比。
+        # 統一成一個清單，送單時再還原成該模型看得懂的欄位。
+        ttk.Label(right, text="輸出規格").grid(row=row, column=0, sticky="w", pady=4)
         self.size_var = tk.StringVar()
         self.size_combo = ttk.Combobox(right, textvariable=self.size_var, state="readonly", width=18)
         self.size_combo.grid(row=row, column=1, sticky="ew", pady=4)
@@ -132,14 +144,16 @@ class SeedanceApp:
 
         row += 1
         self.audio_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self.audio_check = ttk.Checkbutton(
             right, text="同時生成音訊", variable=self.audio_var, command=self._update_estimate
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+        )
+        self.audio_check.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
 
         row += 1
         ttk.Label(right, text="seed（選填）").grid(row=row, column=0, sticky="w", pady=4)
         self.seed_var = tk.StringVar()
-        ttk.Entry(right, textvariable=self.seed_var, width=20).grid(row=row, column=1, sticky="ew", pady=4)
+        self.seed_entry = ttk.Entry(right, textvariable=self.seed_var, width=20)
+        self.seed_entry.grid(row=row, column=1, sticky="ew", pady=4)
 
         row += 1
         ttk.Separator(right).grid(row=row, column=0, columnspan=2, sticky="ew", pady=8)
@@ -211,34 +225,84 @@ class SeedanceApp:
 
     # --- 能力載入 -----------------------------------------------------
 
-    def _load_capabilities_async(self) -> None:
+    def _load_capabilities_async(self, model: str | None = None) -> None:
+        target = model or DEFAULT_MODEL
+
         def work() -> None:
             try:
-                caps = get_capabilities(DEFAULT_MODEL)
-                self.messages.put(("caps", caps))
+                choices = cost_module.selectable_models()
+                caps = get_capabilities(target)
+                self.messages.put(("caps", (caps, choices)))
             except SeedanceError as exc:
                 self.messages.put(("caps_error", str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _apply_capabilities(self, caps: ModelCapabilities) -> None:
+    def _on_model_change(self) -> None:
+        """換模型等於換一整組能力：輸出規格、秒數、音訊與 seed 都要重新取得。"""
+        model_id = self._selected_model_id()
+        if not model_id or (self.caps and model_id == self.caps.id):
+            return
+        self.status_var.set("載入 %s 的能力…" % model_id)
+        self.generate_button.configure(state="disabled")
+        self._load_capabilities_async(model_id)
+
+    def _selected_model_id(self):
+        label = self.model_var.get()
+        for model_id, text in self.model_choices:
+            if text == label:
+                return model_id
+        return None
+
+    def _selected_output(self):
+        label = self.size_var.get()
+        for option in self.output_options:
+            if option.label == label:
+                return option
+        return None
+
+    def _apply_capabilities(self, caps: ModelCapabilities, choices=None) -> None:
         self.caps = caps
-        sizes = caps.sorted_sizes()
-        self.size_combo["values"] = sizes
-        self.size_var.set(caps.default_size())
+        if choices:
+            self.model_choices = choices
+            self.model_combo["values"] = [label for _, label in choices]
+        for model_id, label in self.model_choices:
+            if model_id == caps.id:
+                self.model_var.set(label)
+                break
+
+        self.output_options = caps.output_options()
+        self.size_combo["values"] = [o.label for o in self.output_options]
+        default_option = caps.default_output()
+        self.size_var.set(default_option.label if default_option else "")
 
         durations = [str(d) for d in caps.supported_durations]
         self.duration_combo["values"] = durations
         self.duration_var.set(str(caps.default_duration()))
 
-        if not caps.generate_audio:
+        # 模型不支援的能力直接鎖住，比讓使用者填完再被 API 拒絕好。
+        if caps.generate_audio:
+            self.audio_check.configure(state="normal")
+        else:
             self.audio_var.set(False)
+            self.audio_check.configure(state="disabled")
+
+        if caps.seed:
+            self.seed_entry.configure(state="normal")
+        else:
+            self.seed_var.set("")
+            self.seed_entry.configure(state="disabled")
 
         source = api_key_source()
         self.status_var.set("%s ｜ 金鑰來源：%s" % (caps.name or caps.id, source))
         self.generate_button.configure(state="normal")
         self._log("模型能力載入完成：%s" % caps.id)
-        self._log("預設 %s（最低解析度手機直式）、%s 秒" % (self.size_var.get(), self.duration_var.get()))
+        self._log("預設 %s、%s 秒｜音訊 %s、seed %s" % (
+            self.size_var.get(), self.duration_var.get(),
+            "可用" if caps.generate_audio else "不支援",
+            "可用" if caps.seed else "不支援"))
+        if self.project_tab is not None:
+            self.project_tab.set_model_choices(self.model_choices)
         # 專案分頁的秒數／尺寸選單也要在這時候才填得出來。
         if getattr(self, "project_tab", None):
             self.project_tab._refresh_options()
@@ -270,13 +334,20 @@ class SeedanceApp:
     def _update_estimate(self) -> None:
         if not self.caps or not self.size_var.get() or not self.duration_var.get():
             return
+        option = self._selected_output()
+        if option is None:
+            return
         try:
             estimate = cost_module.estimate(
                 self.caps,
-                size=self.size_var.get(),
                 duration=int(self.duration_var.get()),
+                size=option.size,
+                resolution=option.resolution,
+                aspect_ratio=option.aspect_ratio,
                 generate_audio=self.audio_var.get(),
                 has_video_input=has_video_reference(self.references),
+                reference_count=len(self.references)
+                + bool(self.first_frame_var.get()) + bool(self.last_frame_var.get()),
             )
         except SeedanceError as exc:
             self.estimate_var.set(str(exc))
@@ -300,11 +371,14 @@ class SeedanceApp:
             messagebox.showwarning("seed 格式錯誤", "seed 必須是整數，或留空。")
             return
 
+        option = self._selected_output()
         spec = GenerationSpec(
             prompt=prompt,
             model=self.caps.id,
             duration=int(self.duration_var.get()),
-            size=self.size_var.get(),
+            size=option.size if option else None,
+            resolution=option.resolution if option else None,
+            aspect_ratio=option.aspect_ratio if option else None,
             generate_audio=self.audio_var.get(),
             seed=int(seed_raw) if seed_raw else None,
             references=list(self.references),
@@ -320,10 +394,13 @@ class SeedanceApp:
 
         estimate = cost_module.estimate(
             self.caps,
-            size=spec.size,
             duration=spec.duration,
+            size=spec.size,
+            resolution=spec.resolution,
+            aspect_ratio=spec.aspect_ratio,
             generate_audio=spec.generate_audio,
             has_video_input=has_video_reference(spec.references),
+            reference_count=len(spec.references) + len(spec.frame_types()),
         )
         limit = cost_limit_usd()
         if estimate.usd > limit:
@@ -383,7 +460,8 @@ class SeedanceApp:
                 if kind == "log":
                     self._log(str(payload))
                 elif kind == "caps":
-                    self._apply_capabilities(payload)  # type: ignore[arg-type]
+                    caps_obj, choices = payload  # type: ignore[misc]
+                    self._apply_capabilities(caps_obj, choices)
                 elif kind == "caps_error":
                     self.status_var.set("模型能力載入失敗")
                     self._log("錯誤：%s" % payload)
