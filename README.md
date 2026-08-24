@@ -46,13 +46,61 @@ python -m seedance gen "測試" --dry-run
 
 `--dry-run` 只做參數驗證與估價，不送單、不花錢。其他常用選項：`--duration` `--size` `--resolution` `--aspect-ratio` `--audio` `--seed` `--first-frame` `--last-frame` `--out` `--yes`。
 
-### 批次分鏡
+## 專案模式：一次轉出整部動畫
+
+多鏡動畫用專案模式。它與舊的 `batch` 最大的差別是**有狀態**：每一鏡的結果都記在狀態檔裡，重跑時自動跳過已完成的鏡頭。十鏡跑到第七鏡失敗，重跑只會補那三鏡，不會把前六鏡重新生成一遍再收一次錢。
+
+```bash
+python -m seedance project init project.json
+```
+
+會產生骨架，並把目錄裡現成的圖片自動填進 `cast`。專案檔長這樣：
+
+```json
+{
+  "title": "家族小劇場 EP1",
+  "cast": { "爸爸": "爸爸.png", "媽媽": "媽媽.png", "弟弟": "弟弟.png" },
+  "defaults": { "size": "480x854", "duration": 5, "generate_audio": false },
+  "scenes": [
+    { "id": "s01", "prompt": "客廳，爸爸正要帶弟弟出門", "cast": ["爸爸", "弟弟"] },
+    { "id": "s02", "prompt": "媽媽從廚房探頭叮嚀", "cast": ["媽媽"], "duration": 8 },
+    { "id": "s03", "prompt": "父子在玄關相視而笑", "cast": ["爸爸", "弟弟"], "continue_from": "s01" }
+  ],
+  "output": { "concat": "outputs/EP1.mp4" }
+}
+```
+
+- **`cast` 只定義一次**，各鏡用名字引用，改角色圖時只要改一處。
+- **`continue_from`** 會用 ffmpeg 抽出前一鏡的最後一格當這一鏡的首影格，讓畫面接得起來。標了它的鏡頭必須等前一鏡完成，其餘鏡頭仍然並行 —— 同一個專案裡可以混用。
+- **`id` 是狀態檔的對應鍵**，改了等於變成新的一鏡、會重新生成也重新收費。
+
+```bash
+python -m seedance project check project.json
+```
+
+免費。驗證每一鏡、檢查接續有沒有斷鏈或循環，並列出每鏡估價與總價。確認後：
+
+```bash
+python -m seedance project run project.json --yes
+```
+
+有鏡頭失敗時會**立即停止**，不再送出新的鏡頭；已經在跑的會等它完成，因為那筆已經計費，硬中斷只是讓錢白花。修正後直接重跑即可，已完成的不會重做。`--only s03,s07` 可只重跑特定幾鏡，`--force` 才會重做已完成的（等於再付一次錢）。
+
+```bash
+python -m seedance project status project.json
+```
+
+隨時查每鏡狀態與累計花費。全部完成後會自動合併成 `output.concat` 指定的檔案。
+
+GUI 的「專案批次」分頁可以開啟專案檔逐列編輯：改提示詞、秒數、勾選出場角色、設定接續關係，即時看到總價，再按開始轉出。典型分工是 AI agent 產生初版 `project.json`，人在 GUI 裡微調。
+
+### 舊的批次指令
 
 ```bash
 python -m seedance batch scenes.example.json --concurrency 3 --concat outputs/final.mp4
 ```
 
-分鏡檔用 `defaults` 設共同參數、`scenes` 列各鏡，單鏡的設定會蓋過 defaults。`--concat` 需要 ffmpeg；沒裝就只跳過合併，個別影片照樣產出。
+`batch` 仍然可用，但它沒有狀態，重跑會全部重新生成也重新收費。多鏡的情況建議用專案模式。
 
 ### 其他
 

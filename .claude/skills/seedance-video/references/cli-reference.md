@@ -16,12 +16,90 @@
 | 指令 | 用途 | 花錢？ |
 |---|---|---|
 | `gen` | 生成單支影片 | 是（除非加 `--dry-run`） |
-| `batch` | 依分鏡檔批次生成 | 是（除非加 `--dry-run`） |
+| `project init` | 產生專案檔骨架 | 否 |
+| `project check` | 驗證所有分鏡並估價 | 否 |
+| `project run` | 轉出專案，跳過已完成的分鏡 | 是（僅未完成的） |
+| `project status` | 查看各分鏡狀態與累計花費 | 否 |
+| `batch` | 舊的一次性批次，沒有狀態 | 是（除非加 `--dry-run`） |
 | `resume` | 用 job id 取回已送出的任務 | 否（該筆已計費） |
 | `models` | 列出模型與能力 | 否 |
 | `gui` | 開啟 Tkinter 圖形介面 | 否（介面內操作才會） |
 
-`gen` `batch` `resume` `models` 都支援 `--json`。
+`gen` `batch` `resume` `models` 與 `project check/run/status` 都支援 `--json`。
+
+## project run 的旗標
+
+| 旗標 | 說明 |
+|---|---|
+| `--concurrency` | 並行數，預設 3。標了 `continue_from` 的鏡頭必須等前一鏡，不受此值影響 |
+| `--only s03,s07` | 只跑指定分鏡。若指定的鏡頭要接續某鏡而該鏡既不在範圍內也未完成，會直接報錯 |
+| `--force` | 連已完成的也重新生成。**這是在付第二次錢**，需另外加 `--yes` |
+| `--out` | 影片輸出資料夾 |
+| `--yes` / `-y` | 略過成本護欄。多鏡專案幾乎一定會用到，所以更要先報價 |
+
+### `project run --json` 的回傳
+
+```json
+{
+  "ok": false,
+  "command": "project run",
+  "completed": ["s02"],
+  "failed": [{ "id": "s01", "error": "HTTP 500: ..." }],
+  "skipped": [],
+  "not_started": ["s03", "s04"],
+  "concat_path": null,
+  "spent_usd": 0.07,
+  "project_total_spent_usd": 0.07
+}
+```
+
+`skipped` 是這次跳過的已完成分鏡（沒有再收費），`not_started` 是因為失敗即停而沒送出的。`concat_path` 只有在全部分鏡都完成時才會有值。
+
+### 專案檔完整欄位
+
+```json
+{
+  "title": "字串，僅用於顯示",
+  "cast": { "角色名": "圖片路徑或 HTTPS 網址" },
+  "defaults": { "model": "...", "size": "480x854", "duration": 5, "generate_audio": false },
+  "scenes": [
+    {
+      "id": "s01",
+      "prompt": "畫面描述",
+      "cast": ["角色名"],
+      "references": ["額外素材路徑"],
+      "duration": 5,
+      "size": "480x854",
+      "generate_audio": false,
+      "seed": 12345,
+      "continue_from": "前一鏡的 id",
+      "first_frame": "圖片路徑（與 continue_from 互斥）",
+      "last_frame": "圖片路徑"
+    }
+  ],
+  "output": { "concat": "outputs/final.mp4" }
+}
+```
+
+各鏡的欄位覆寫 `defaults`。相對路徑以專案檔所在目錄為基準。
+
+### 狀態檔
+
+`project.json` 旁邊會自動產生 `project.state.json`：
+
+```json
+{
+  "scenes": {
+    "s01": { "status": "done", "job_id": "...", "video_path": "...",
+             "cost": 0.07, "last_frame": ".frames/s01_last.png",
+             "completed_at": "2026-08-21 01:20:11" }
+  },
+  "total_cost": 0.28,
+  "updated_at": "..."
+}
+```
+
+`status` 有 `pending` / `running` / `done` / `failed`。判定「已完成」時會一併確認影片檔還在，檔案被刪掉的鏡頭會重新生成。**不要手動編輯或刪除狀態檔**，刪掉等於讓整個專案重跑重收費。`.frames/` 放的是接續用的影格快取。
 
 ## gen 的旗標
 

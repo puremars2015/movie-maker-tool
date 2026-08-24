@@ -119,7 +119,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("gui", help="開啟圖形介面")
 
-    for command in (gen, batch, resume_cmd, models):
+    project = sub.add_parser("project", help="專案模式：一次定義所有分鏡，一次轉出全部")
+    project_sub = project.add_subparsers(dest="project_command")
+
+    p_init = project_sub.add_parser("init", help="產生專案檔骨架")
+    p_init.add_argument("path", nargs="?", default="project.json")
+
+    p_check = project_sub.add_parser("check", help="驗證所有分鏡並列出報價單（免費）")
+    p_check.add_argument("path")
+
+    p_run = project_sub.add_parser("run", help="轉出專案，自動跳過已完成的分鏡")
+    p_run.add_argument("path")
+    p_run.add_argument("--concurrency", type=int, default=3)
+    p_run.add_argument("--only", default=None, help="只跑指定分鏡，逗號分隔，例如 s03,s07")
+    p_run.add_argument("--force", action="store_true", help="連已完成的也重新生成（會重複計費）")
+    p_run.add_argument("--out", default=None)
+    p_run.add_argument("--yes", "-y", action="store_true")
+
+    p_status = project_sub.add_parser("status", help="查看各分鏡狀態與累計花費")
+    p_status.add_argument("path")
+
+    for command in (gen, batch, resume_cmd, models, p_check, p_run, p_status):
         _add_json_flag(command)
     return parser
 
@@ -355,6 +375,131 @@ def cmd_models(args) -> int:
     return 0
 
 
+def cmd_project(args) -> int:
+    from .project import Project, ProjectState, load_project, write_template
+    from .project_runner import plan_project, run_project, summarize
+
+    command = getattr(args, "project_command", None)
+    if not command:
+        print("用法：python -m seedance project {init|check|run|status} <檔案>")
+        return 1
+
+    if command == "init":
+        path = Path(args.path)
+        if path.exists():
+            print("錯誤：%s 已存在，不覆寫。" % path, file=sys.stderr)
+            return 1
+        images = sorted(p for p in path.resolve().parent.glob("*.png"))
+        write_template(path, cast_images=images)
+        print("已建立 %s" % path)
+        if images:
+            print("已把目錄裡的 %d 張圖填進 cast：%s" % (len(images), ", ".join(p.stem for p in images)))
+        print("編輯完成後，用 project check 驗證與估價（免費）。")
+        return 0
+
+    project = load_project(args.path)
+    state = ProjectState.load(project)
+
+    if command == "status":
+        summary = summarize(project, state)
+        if _wants_json(args):
+            return _emit(args, {"ok": True, "command": "project status", **summary})
+        _print_status(summary)
+        return 0
+
+    if command == "check":
+        plan = plan_project(project, state)
+        rows = [
+            {
+                "id": e.scene_id,
+                "already_done": e.already_done,
+                "list_price_usd": round(e.estimate.usd, 6),
+                "size": "%dx%d" % (e.estimate.width, e.estimate.height),
+                "duration": e.estimate.duration,
+            }
+            for e in plan.estimates
+        ]
+        if _wants_json(args):
+            return _emit(args, {
+                "ok": True,
+                "command": "project check",
+                "title": project.title,
+                "scene_count": len(project.scenes),
+                "scenes": rows,
+                "todo": plan.todo,
+                "skipped": plan.skipped,
+                "todo_list_price_usd": round(plan.todo_cost, 6),
+                "total_list_price_usd": round(plan.total_cost, 6),
+                "cost_limit_usd": cost_limit_usd(),
+                "exceeds_cost_limit": plan.todo_cost > cost_limit_usd(),
+            })
+
+        print("專案：%s（%d 鏡）" % (project.title or project.path.name, len(project.scenes)))
+        for row in rows:
+            mark = "✓ 已完成" if row["already_done"] else "  待生成"
+            print("  %-8s %s  %-10s %2d秒  US$%.3f" % (
+                row["id"], mark, row["size"], row["duration"], row["list_price_usd"]))
+        print("本次需生成 %d 鏡，預估上限 US$%.3f（實際約四成，US$%.3f）" % (
+            len(plan.todo), plan.todo_cost, plan.todo_cost * 0.416))
+        if plan.todo_cost > cost_limit_usd():
+            print("注意：超過成本護欄 US$%.2f，執行時需要加 --yes" % cost_limit_usd())
+        return 0
+
+    # command == "run"
+    only = [s.strip() for s in args.only.split(",") if s.strip()] if args.only else None
+    result = run_project(
+        project,
+        state,
+        api_key=get_api_key(),
+        concurrency=args.concurrency,
+        approved=args.yes,
+        only=only,
+        force=args.force,
+        log=_logger(args),
+        output_dir=Path(args.out) if args.out else None,
+    )
+
+    if _wants_json(args):
+        return _emit(args, {
+            "ok": result.ok,
+            "command": "project run",
+            "completed": result.completed,
+            "failed": [{"id": sid, "error": msg} for sid, msg in result.failed],
+            "skipped": result.skipped,
+            "not_started": result.not_started,
+            "concat_path": str(result.concat_path) if result.concat_path else None,
+            "spent_usd": round(result.spent_usd, 6),
+            "project_total_spent_usd": round(state.total_cost(), 6),
+        })
+
+    print("\n完成 %d 鏡，本次花費 US$%.4f（專案累計 US$%.4f）" % (
+        len(result.completed), result.spent_usd, state.total_cost()))
+    for scene_id, message in result.failed:
+        print("  ✗ %s：%s" % (scene_id, message))
+    if result.not_started:
+        print("  未開始：%s" % ", ".join(result.not_started))
+    if result.concat_path:
+        print("  合併輸出：%s" % result.concat_path)
+    return 0 if result.ok else 1
+
+
+def _print_status(summary: dict) -> None:
+    counts = summary["counts"]
+    print("專案：%s（%d 鏡）" % (summary["title"] or summary["project_path"], summary["scene_count"]))
+    print("完成 %d ／ 失敗 %d ／ 待生成 %d" % (
+        counts.get("done", 0), counts.get("failed", 0), counts.get("pending", 0)))
+    print("累計花費 US$%.4f" % summary["spent_usd"])
+    for scene in summary["scenes"]:
+        mark = {"done": "✓", "failed": "✗", "running": "…", "pending": " "}.get(scene["status"], " ")
+        extra = ""
+        if scene["continue_from"]:
+            extra = "  ←接續 %s" % scene["continue_from"]
+        print("  %s %-8s %-8s %s%s" % (
+            mark, scene["id"], scene["status"], (scene["prompt"] or "")[:34], extra))
+        if scene["error"]:
+            print("      錯誤：%s" % str(scene["error"]).splitlines()[0][:70])
+
+
 def cmd_gui(_args) -> int:
     from .gui import main as gui_main
 
@@ -378,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
         "resume": cmd_resume,
         "models": cmd_models,
         "gui": cmd_gui,
+        "project": cmd_project,
     }
     try:
         return handlers[args.command](args)

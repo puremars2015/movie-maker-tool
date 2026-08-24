@@ -23,6 +23,7 @@ from .capabilities import ModelCapabilities, get_capabilities
 from .client import GenerationSpec
 from .config import DEFAULT_MODEL, OUTPUT_DIR, api_key_source, cost_limit_usd, get_api_key
 from .errors import SeedanceError
+from .gui_project import ProjectTab
 from .media import FILE_DIALOG_TYPES, describe, has_video_reference
 from .runner import generate
 
@@ -59,7 +60,14 @@ class SeedanceApp:
         self.status_var = tk.StringVar(value="載入模型能力中…")
         ttk.Label(header, textvariable=self.status_var, foreground="#666").pack(side="right")
 
-        body = ttk.Frame(outer)
+        # 兩種工作方式各佔一頁：臨時想到一支就生，或先排好整部片再一次轉出。
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+
+        single = ttk.Frame(notebook, padding=10)
+        notebook.add(single, text="  單支生成  ")
+
+        body = ttk.Frame(single)
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=3)
         body.columnconfigure(1, weight=2)
@@ -67,7 +75,10 @@ class SeedanceApp:
 
         self._build_left(body)
         self._build_right(body)
-        self._build_bottom(outer)
+        self._build_bottom(single)
+
+        self.project_tab = ProjectTab(notebook, lambda: self.caps)
+        notebook.add(self.project_tab, text="  專案批次  ")
 
     def _build_left(self, parent: ttk.Frame) -> None:
         left = ttk.Frame(parent)
@@ -228,6 +239,9 @@ class SeedanceApp:
         self.generate_button.configure(state="normal")
         self._log("模型能力載入完成：%s" % caps.id)
         self._log("預設 %s（最低解析度手機直式）、%s 秒" % (self.size_var.get(), self.duration_var.get()))
+        # 專案分頁的秒數／尺寸選單也要在這時候才填得出來。
+        if getattr(self, "project_tab", None):
+            self.project_tab._refresh_options()
         if source == "未設定":
             self._log("警告：找不到 OPENROUTER_API_KEY，請在專案根目錄的 .env 填入後重開。")
         self._update_estimate()

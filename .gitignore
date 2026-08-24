@@ -5,6 +5,8 @@
 outputs/
 jobs/
 .cache/
+.frames/
+*.state.json
 
 # 個人素材：參考用的人物圖不進版控，執行時以路徑指定即可
 *.png

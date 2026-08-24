@@ -1,6 +1,6 @@
 ---
 name: seedance-video
-description: 用 OpenRouter 的 Seedance 模型生成影片，支援純文字生成、角色參考圖生成、首尾影格控制與批次分鏡。當使用者提到生成影片、做動畫、AI 影片、短片、text-to-video、image-to-video、文生視頻、seedance，或想把腳本／分鏡變成影片、用人物照片做動畫時，都要使用這個 skill。每次生成都會實際扣款，這個 skill 內建先試算費用再取得同意的流程，所以即使使用者只是問「這樣要多少錢」也應該用它。
+description: 用 OpenRouter 的 Seedance 模型生成影片，支援純文字生成、角色參考圖生成、首尾影格控制，以及把整個故事拆成多鏡分鏡一次轉出的專案模式。當使用者提到生成影片、做動畫、AI 影片、短片、多鏡頭、分鏡、把故事或劇本變成影片、一次轉出全部、text-to-video、image-to-video、文生視頻、seedance，或想用人物照片做動畫時，都要使用這個 skill。每次生成都會實際扣款，這個 skill 內建先試算費用再取得同意的流程，也內建避免重複計費的續跑機制，所以即使使用者只是問「這樣要多少錢」也應該用它。
 ---
 
 # Seedance 影片生成
@@ -110,29 +110,72 @@ python -m seedance gen "一家人在客廳" --ref 爸爸.png --ref 媽媽.png --
 
 本機檔案會自動轉成 base64 內嵌，超過 1.5 MB 的圖片會先縮到長邊 1536 px（需要 Pillow）。也可以直接給公開 HTTPS 網址。影片與音訊參考只有 Seedance 2 代以上會實際採用。
 
-## 批次分鏡
+## 多鏡動畫：專案模式
 
-多個鏡頭時用批次，比逐支呼叫好：只需一次總價確認，而且可以並行。
+使用者給你一段故事、腳本或對話，要做成有多個鏡頭的動畫時，用專案模式，不要逐支呼叫 `gen`。專案模式會把每一鏡的結果記在狀態檔裡，**重跑時自動跳過已完成的鏡頭**，所以中途失敗再跑不會重複付錢。逐支呼叫沒有這個保護。
 
-分鏡檔格式（`defaults` 是共同參數，各 scene 可覆寫）：
+你的工作是把故事拆成分鏡，寫成 `project.json`：
 
 ```json
 {
+  "title": "家族小劇場 EP1",
+  "cast": { "爸爸": "爸爸.png", "媽媽": "媽媽.png", "弟弟": "弟弟.png" },
   "defaults": { "size": "480x854", "duration": 5, "generate_audio": false },
   "scenes": [
-    { "name": "01-開場", "prompt": "清晨的老街，鏡頭緩慢上升" },
-    { "name": "02-登場", "prompt": "橘貓從巷口走出來", "duration": 6 }
-  ]
+    { "id": "s01", "prompt": "客廳，爸爸正要帶弟弟出門", "cast": ["爸爸", "弟弟"] },
+    { "id": "s02", "prompt": "媽媽從廚房探頭叮嚀", "cast": ["媽媽"], "duration": 8 },
+    { "id": "s03", "prompt": "父子在玄關相視而笑", "cast": ["爸爸", "弟弟"], "continue_from": "s01" }
+  ],
+  "output": { "concat": "outputs/EP1.mp4" }
 }
 ```
 
+寫分鏡時注意這幾點：
+
+- **`cast` 只定義一次**，各鏡用名字引用。不要在每一鏡重複貼圖片路徑。
+- **`id` 要穩定**。它是狀態檔的對應鍵，改了就等於變成新的一鏡、會重新生成也重新收費。
+- **`continue_from`** 會抽出前一鏡的最後一格當這一鏡的首影格，讓畫面接得起來。代價是那一鏡必須等前一鏡跑完，不能並行。需要畫面連貫時才用，只是同一組角色的話靠 `cast` 就夠了。
+- 相對路徑以**專案檔所在目錄**為基準，不是工作目錄。
+
+`python -m seedance project init project.json` 會產生骨架，而且會把目錄裡現成的圖片自動填進 `cast`，省得你猜路徑。
+
+### 流程
+
 ```bash
-python -m seedance batch scenes.json --concurrency 3 --json --dry-run
+python -m seedance project check project.json --json
 ```
 
-確認總價後拿掉 `--dry-run`。加 `--concat outputs/final.mp4` 會在全部完成後用 ffmpeg 串成一支；沒裝 ffmpeg 就只跳過合併，個別影片照常產出。
+免費。驗證每一鏡、解析 cast、檢查接續關係有沒有斷鏈或循環，並回傳每鏡估價與 `todo_list_price_usd`。把總價告訴使用者、取得同意，然後：
 
-批次的護欄是看**總價**，所以多鏡頭很容易超過 US$0.50 —— 這時更要把總價講清楚再問。
+```bash
+python -m seedance project run project.json --json --yes
+```
+
+多鏡專案的總價很容易超過 US$0.50 的護欄，所以 `--yes` 幾乎一定會用到 —— 這更是要先講清楚總價的理由，而不是理所當然地加上去。
+
+```bash
+python -m seedance project status project.json --json
+```
+
+隨時可查每鏡狀態與累計花費。**重跑前先看它**：已經 `done` 的鏡頭再跑一次就是再付一次錢。
+
+### 失敗了怎麼辦
+
+有鏡頭失敗時會**立即停止**，不再送出新的鏡頭（已經在跑的會等它完成，因為那筆已經計費）。回傳裡 `failed` 是失敗的、`not_started` 是還沒開始的。
+
+修正該鏡的提示詞或參數後直接重跑 `project run` 即可 —— 它會自動跳過已完成的，只補未完成的。**不要因為失敗就重建專案或改 id**，那會讓已完成的鏡頭失去對應而全部重跑。
+
+只想重跑特定幾鏡用 `--only s03,s07`。要重做已完成的鏡頭才用 `--force`，那是在付第二次錢，一定要先問過使用者。
+
+全部鏡頭完成後會自動用 ffmpeg 合併成 `output.concat` 指定的檔案；缺鏡時不會合併，因為合出來的片是錯的。
+
+### 也可以交給使用者用 GUI 微調
+
+`python -m seedance gui` 的「專案批次」分頁可以開啟你產生的 `project.json`，逐列改提示詞、秒數、出場角色與接續關係，即時看到總價，再按開始轉出。你產生初版、使用者微調，是預期的分工方式。
+
+### 舊的 batch 指令
+
+`python -m seedance batch scenes.json` 仍然可用，但它沒有狀態、不會跳過已完成的鏡頭，重跑會全部重新收費。多鏡的情況一律優先用專案模式。
 
 ## 產出
 
