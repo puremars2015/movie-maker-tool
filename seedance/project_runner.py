@@ -99,6 +99,8 @@ def plan_project(
         if scene.id not in selected:
             continue
 
+        _check_assets_exist(scene)
+
         caps = caps_cache.setdefault(scene.model, get_capabilities(scene.model))
         spec = scene.to_spec()
         if scene.continue_from and not spec.first_frame:
@@ -119,6 +121,29 @@ def plan_project(
 
     _check_dependencies_runnable(project, state, plan, force=force)
     return plan
+
+
+def _check_assets_exist(scene: Scene) -> None:
+    """確認本機素材真的在。
+
+    check 的意義就是把問題全部攔在花錢之前，所以路徑打錯不能等到 run 才發現。
+    網址不在這裡驗證——連線失敗與檔案不存在是不同的問題，而且驗證網址要發請求。
+    """
+    from .media import is_url
+
+    missing = []
+    for source in list(scene.references) + [scene.first_frame, scene.last_frame]:
+        if not source or is_url(source):
+            continue
+        if not Path(source).is_file():
+            missing.append(source)
+
+    if missing:
+        raise ValidationError(
+            "分鏡 %s 找不到這些素材：\n  - %s\n"
+            "路徑以專案檔所在目錄為基準，不是你執行指令的目錄。"
+            % (scene.id, "\n  - ".join(missing))
+        )
 
 
 def _select(project: Project, only: list[str] | None) -> set[str]:
