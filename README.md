@@ -1,7 +1,18 @@
 # movie-maker-tool
 
-透過 OpenRouter 生成影片，支援 ByteDance Seedance 2.0 Mini 與 MiniMax H3 等多個模型，
-CLI 與 GUI 兩種介面共用同一套核心邏輯。所有模型參數都是從 API 讀回來的，換模型時選項會跟著變。
+透過 OpenRouter 生成影片。支援 ByteDance Seedance 2.0 Mini 與 MiniMax H3 等多個模型，
+所有模型參數都是從 API 即時讀回來的，換模型時選項與計價方式會跟著變。
+
+三種用法共用同一套核心邏輯：
+
+- **GUI** — 單支隨手生成，或用專案模式一次轉出整部動畫
+- **CLI** — 同樣的功能，另有 `--json` 供程式呼叫
+- **Skill** — 打包成 skill 讓 AI agent 直接使用
+
+因為每次生成都會實際扣款，整個工具是繞著「先免費試算、講清楚價格、確認後才送單」設計的，
+而且重跑不會為已完成的片段重複付費。
+
+Repo：<https://github.com/puremars2015/movie-maker-tool>（私有）
 
 ## 安裝
 
@@ -29,7 +40,14 @@ OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 python -m movie_maker_tool gui
 ```
 
-介面提供：模型選擇、提示詞輸入、輸出規格（預設最低解析度的手機直式）、長度秒數、參考素材多選上傳（圖片／影片／音訊）、首尾影格、seed、音訊開關、即時費用預估、執行紀錄、播放與開啟輸出資料夾。模型不支援的欄位（例如 H3 的 seed）會自動變灰。
+介面分成兩個分頁：
+
+- **單支生成** — 臨時想到一支就生。提供模型選擇、提示詞、輸出規格（預設最低解析度的手機直式）、
+  長度秒數、參考素材多選上傳（圖片／影片／音訊）、首尾影格、seed、音訊開關、即時費用預估、
+  執行紀錄、播放與開啟輸出資料夾。
+- **專案批次** — 先排好整部片的分鏡再一次轉出，詳見下面的「專案模式」。
+
+模型不支援的欄位（例如 H3 的 seed）會自動變灰，不會讓你填完才被 API 拒絕。
 
 ## CLI
 
@@ -68,8 +86,11 @@ python -m movie_maker_tool models --model minimax/hailuo-3
 | 計價 | 依畫面大小（token） | **依秒 $0.13＋每張參考圖 $0.04** |
 | 5 秒一鏡（480x854 / 2K 9:16） | 牌價 $0.168、實際約 $0.070 | $0.650（無折扣） |
 
-**H3 大約貴一個數量級**，因為它固定 2K 而且依秒計價。同一份 12 鏡分鏡，seedance 牌價
-約 $2.5（實際約 $1.05），H3 約 $12.7。
+**H3 大約貴一個數量級**，因為它固定 2K 而且依秒計價。同一支 5 秒鏡頭：seedance
+牌價 $0.168（依實測折扣實際約 $0.070），H3 $0.650 —— 對牌價是 3.9 倍，對實際扣款是 9.3 倍。
+帶 5 張參考素材的話 H3 還要再加 $0.20（每張 $0.04），變成 $0.850。
+
+多鏡專案就是這個差距乘上鏡數，所以換模型前務必重跑一次 `project check` 看總價。
 
 GUI 的模型下拉選單只列出**算得出價錢的模型**（目前 11 個）。算不出價的不該讓人按下送出，
 所以刻意排除；CLI 仍可用 `--model` 指定任何型號，只是會在估價階段擋下並說明原因。
@@ -182,7 +203,7 @@ cp -r .claude/skills/movie-maker-tool ~/.claude/skills/
 
 ### `--json` 模式
 
-Skill 之所以能可靠運作，靠的是 CLI 的機器可讀輸出。`gen`、`batch`、`resume`、`models` 都支援 `--json`：
+Skill 之所以能可靠運作，靠的是 CLI 的機器可讀輸出。`gen`、`batch`、`resume`、`models` 與 `project check` / `run` / `status` 都支援 `--json`：
 
 ```bash
 python -m movie_maker_tool gen "提示詞" --duration 5 --json --dry-run
@@ -225,29 +246,47 @@ OpenRouter 的影片生成是非同步任務：
 ## 成本護欄
 
 預設單次 US$0.50，超過時 CLI 需加 `--yes`、GUI 會跳出確認框。門檻可用 `.env` 裡的
-`MOVIE_MAKER_COST_LIMIT` 調整。計價方式見上面「費用怎麼算」。
+`MOVIE_MAKER_COST_LIMIT` 調整；工具改名前叫 `SEEDANCE_COST_LIMIT`，舊鍵仍然有效，
+所以改名不會讓你原本設的門檻悄悄失效。計價方式見上面「費用怎麼算」。
 
 ## 產出
 
-- `outputs/日期-時間_標籤_寬x高_秒數.mp4` — 影片
-- 同名 `.json` — 參數、seed、job id、實際費用，用來重現與對帳
+- `outputs/日期-時間_標籤_寬x高_秒數.mp4` — 影片。標籤取自專案的分鏡編號，
+  單支生成則取自 `--name` 或提示詞開頭
+- 同名 `.json` — 參數、seed、job id、**實際費用**，用來重現與對帳
 - `jobs/<job_id>.json` — 任務狀態記錄，`resume` 會讀它
+- `<專案>.state.json` — 專案各分鏡的完成狀態與花費，放在專案檔旁邊。
+  **不要手動刪除**，刪了等於整個專案重跑重收費
+- `.frames/` — 鏡頭接續用的影格快取，可安全刪除，需要時會重新抽取
 
 ## 檔案結構
 
 | 檔案 | 用途 |
 |---|---|
-| `movie_maker_tool/config.py` | `.env` 解析、金鑰查找、路徑與門檻 |
-| `movie_maker_tool/capabilities.py` | 抓 `/videos/models`、快取、送單前驗參數 |
-| `movie_maker_tool/cost.py` | token 估算、計價 SKU、成本護欄 |
-| `movie_maker_tool/media.py` | 參考素材轉 content part、自動縮圖、大小上限 |
-| `movie_maker_tool/client.py` | 送單 / 輪詢 / 下載、任務記錄 |
-| `movie_maker_tool/runner.py` | 流程編排、批次、ffmpeg 合併 |
-| `movie_maker_tool/cli.py` | 命令列介面 |
-| `movie_maker_tool/gui.py` | Tkinter 圖形介面 |
+| `config.py` | `.env` 解析、金鑰查找、路徑與門檻 |
+| `errors.py` | 例外型別，`--json` 的 `error.type` 就是這些名字 |
+| `capabilities.py` | 抓 `/videos/models`、快取、輸出規格清單、送單前驗參數 |
+| `cost.py` | 依 token 或依秒兩種計價、實測折扣、成本護欄、可選模型清單 |
+| `media.py` | 參考素材轉 content part、自動縮圖、大小上限 |
+| `client.py` | 送單 / 輪詢 / 下載、任務記錄 |
+| `runner.py` | 單支與批次的流程編排、ffmpeg 合併 |
+| `project.py` | 專案檔與狀態檔、cast 解析、接續關係驗證 |
+| `project_runner.py` | 專案排程（並行與接續混用）、失敗即停、影格抽取 |
+| `cli.py` | 命令列介面 |
+| `gui.py` | Tkinter 主視窗與「單支生成」分頁 |
+| `gui_project.py` | 「專案批次」分頁與角色表編輯 |
+
+檔案都在 `movie_maker_tool/` 底下。CLI 與 GUI 都只是薄殼，實際工作都在
+`runner.py` 與 `project_runner.py`，所以兩個介面的行為不會不一致。
 
 ## 已知限制
 
+- **只支援兩種計價寫法**：依 token（`video_tokens*`）與依秒（`duration_seconds`）。
+  OpenRouter 上約有一半的影片模型用的是變體命名（`*_720p`、`cents_per_*` 等），
+  這些算不出價錢，所以不會出現在 GUI 的模型選單裡。CLI 仍可用 `--model` 指定，
+  但會在估價階段被擋下並說明原因——寧可擋住，也不要在不知道價格的情況下送出。
+- **實測折扣只有 seedance-2.0-mini 有**。其他模型一律顯示牌價，寧可高估。
 - 參考素材走 base64 內嵌，單一請求總量上限 24 MB；素材很多時建議改放公開 HTTPS 網址。
 - 影片與音訊參考只有 Seedance 2 代以上的模型會實際採用，其他模型會忽略。
 - 影片生成不支援 Zero Data Retention（非同步取件必須暫存）。
+- 打包的執行檔只能在對應作業系統上建立，不能跨平台。
