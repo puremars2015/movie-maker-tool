@@ -381,10 +381,21 @@ class ProjectTab(ttk.Frame):
 
         for name, block in blocks:
             size = block.get("size")
-            if size and not caps.uses_explicit_sizes:
-                changes.append("%s：移除 size %s，改用 %s" % (name, size, default_option.label if default_option else "預設"))
-            elif size and size not in caps.supported_sizes:
-                changes.append("%s：size %s 不支援，改為 %s" % (name, size, default_option.size if default_option else "預設"))
+            resolution = block.get("resolution")
+            fallback = default_option.label if default_option else "預設"
+
+            if caps.uses_explicit_sizes:
+                # 目標模型吃明確尺寸：清掉另一種寫法的殘骸，否則兩者會同時存在而互相矛盾。
+                if resolution or block.get("aspect_ratio"):
+                    changes.append("%s：移除解析度 %s，改用尺寸 %s"
+                                   % (name, resolution or block.get("aspect_ratio"), fallback))
+                if size and size not in caps.supported_sizes:
+                    changes.append("%s：size %s 不支援，改為 %s" % (name, size, fallback))
+            else:
+                if size:
+                    changes.append("%s：移除 size %s，改用 %s" % (name, size, fallback))
+                if resolution and resolution not in caps.supported_resolutions:
+                    changes.append("%s：解析度 %s 不支援，改為 %s" % (name, resolution, fallback))
 
             duration = block.get("duration")
             if duration and caps.supported_durations and int(duration) not in caps.supported_durations:
@@ -400,14 +411,23 @@ class ProjectTab(ttk.Frame):
         default_option = caps.default_output()
         for block in [self.project.defaults or {}] + self.scenes:
             size = block.get("size")
-            if size and (not caps.uses_explicit_sizes or size not in caps.supported_sizes):
-                block.pop("size", None)
+            resolution = block.get("resolution")
+
+            # 先判斷這一塊的規格在新模型下還合不合用，再決定要不要換掉。
+            if caps.uses_explicit_sizes:
+                stale = bool(resolution) or bool(block.get("aspect_ratio"))
+                invalid = bool(size) and size not in caps.supported_sizes
+            else:
+                stale = bool(size)
+                invalid = bool(resolution) and resolution not in caps.supported_resolutions
+
+            if stale or invalid or not (size or resolution):
+                # 三個欄位一起清掉再重寫，避免留下另一種寫法的殘骸——這正是
+                # 「切成 H3 再切回 seedance」會讓 defaults 同時有 size 與 2K 的原因。
+                for key in ("size", "resolution", "aspect_ratio"):
+                    block.pop(key, None)
                 if default_option:
-                    if default_option.size:
-                        block["size"] = default_option.size
-                    else:
-                        block["resolution"] = default_option.resolution
-                        block["aspect_ratio"] = default_option.aspect_ratio
+                    block.update(default_option.as_request_fields())
 
             duration = block.get("duration")
             if duration and caps.supported_durations and int(duration) not in caps.supported_durations:

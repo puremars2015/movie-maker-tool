@@ -162,6 +162,14 @@ def _build_scene(entry: dict, index: int, defaults: dict, cast_table: dict, root
         if resolved not in references:
             references.append(resolved)
 
+    # size 與 resolution+aspect_ratio 是同一件事的兩種寫法，同時存在就會互相矛盾。
+    # 這種混合狀態最常見的來源是換過模型：H3 只吃 resolution，seedance 只吃 size，
+    # 切換時若沒清乾淨，defaults 會留下另一種寫法的殘骸。以 size 為準並丟掉另一組，
+    # 比讓使用者收到「解析度 2K 不支援」卻找不到自己在哪裡設過 2K 要好。
+    if merged.get("size"):
+        merged.pop("resolution", None)
+        merged.pop("aspect_ratio", None)
+
     continue_from = merged.get("continue_from")
     first_frame = merged.get("first_frame")
     if continue_from and first_frame:

@@ -8,9 +8,8 @@
   },
   "defaults": {
     "model": "bytedance/seedance-2.0-mini",
-    "size": "480x854",
-    "duration": 5,
-    "generate_audio": true
+    "duration": 6,
+    "generate_audio": false
   },
   "scenes": [
     {
@@ -25,13 +24,13 @@
       "references": [
         "storyboards/s01.png"
       ],
-      "duration": 12,
-      "size": "480x854",
-      "generate_audio": true
+      "duration": 10,
+      "generate_audio": true,
+      "size": "480x640"
     },
     {
       "id": "s02",
-      "prompt": "用溫暖細膩的原創日系手繪風格生成動畫，爸爸一手牽姊姊、一手牽弟弟走出家門，媽媽留在門內對外面微笑揮手。鏡頭固定在屋內，以溫暖逆光拍攝三人的背影，木門在他們身後緩緩關上。姊姊與弟弟都雙手空空，畫面中沒有飲料。無對白，動作自然流暢。",
+      "prompt": "用類似宮崎駿風格的畫風跟運鏡手法，爸爸一手牽姊姊、一手牽弟弟走出家門，媽媽留在門內對外面微笑揮手。鏡頭固定在屋內，以溫暖逆光拍攝三人的背影，木門在他們身後緩緩關上。姊姊與弟弟都雙手空空，畫面中沒有飲料。無對白，動作自然流暢。",
       "cast": [
         "爸爸",
         "媽媽",
@@ -41,10 +40,10 @@
       "references": [
         "storyboards/s02.png"
       ],
-      "duration": 4,
+      "duration": 6,
       "continue_from": "s01",
-      "size": "480x854",
-      "generate_audio": true
+      "generate_audio": false,
+      "size": "480x640"
     },
     {
       "id": "s03",
@@ -57,9 +56,9 @@
       "references": [
         "storyboards/s03.png"
       ],
-      "duration": 5,
-      "size": "480x854",
-      "generate_audio": true
+      "duration": 6,
+      "generate_audio": true,
+      "size": "480x640"
     },
     {
       "id": "s04",
@@ -72,10 +71,10 @@
       "references": [
         "storyboards/s04.png"
       ],
-      "duration": 8,
+      "duration": 6,
       "continue_from": "s03",
-      "size": "480x854",
-      "generate_audio": true
+      "generate_audio": true,
+      "size": "480x480"
     },
     {
       "id": "s05",
@@ -90,8 +89,8 @@
       ],
       "duration": 6,
       "continue_from": "s04",
-      "size": "480x854",
-      "generate_audio": true
+      "generate_audio": true,
+      "size": "480x640"
     },
     {
       "id": "s06",
@@ -105,9 +104,9 @@
       "references": [
         "storyboards/s06.png"
       ],
-      "duration": 8,
-      "size": "480x854",
-      "generate_audio": true
+      "duration": 6,
+      "generate_audio": true,
+      "size": "480x640"
     },
     {
       "id": "s07",
@@ -121,83 +120,93 @@
       "references": [
         "storyboards/s07.png"
       ],
-      "duration": 7,
-      "size": "480x854",
-      "generate_audio": true
+      "duration": 6,
+      "generate_audio": true,
+      "size": "480x640"
     },
     {
       "id": "s08",
       "prompt": "延續上一鏡的客廳與四人站位。姊姊笑嘻嘻地跑近，只用手掌輕輕拍一下爸爸的屁股；這是安全、俏皮、完全不痛的家庭喜劇動作。爸爸誇張地跳了一下，媽媽和弟弟在旁邊看著。鏡頭跟著姊姊短暫橫移。姊姊笑著說：「爸爸不乖！」所有對白使用自然的台灣華語，說話者正確、口型同步。",
       "cast": [
-        "姊姊",
         "爸爸",
         "媽媽",
+        "姊姊",
         "弟弟"
       ],
       "references": [
         "storyboards/s08.png"
       ],
-      "duration": 4,
-      "continue_from": "s07"
+      "duration": 6,
+      "continue_from": "s07",
+      "size": "480x640",
+      "generate_audio": true
     },
     {
       "id": "s09",
       "prompt": "延續上一鏡。爸爸落地後立刻轉身，伸手指向姊姊，表情像突然抓到把柄；姊姊愣住抬頭看他，媽媽與弟弟仍清楚地留在背景。鏡頭快速從爸爸帶到姊姊。爸爸說：「等一下，姊姊也不乖！飲料是誰喝的？」畫面結尾停在姊姊心虛的表情。所有對白使用自然的台灣華語，說話者正確、口型同步。",
       "cast": [
         "爸爸",
-        "姊姊",
         "媽媽",
+        "姊姊",
         "弟弟"
       ],
       "references": [
         "storyboards/s09.png"
       ],
-      "duration": 7,
-      "continue_from": "s08"
+      "duration": 6,
+      "continue_from": "s08",
+      "size": "480x640",
+      "generate_audio": true
     },
     {
       "id": "s10",
       "prompt": "延續上一鏡的客廳與人物位置。姊姊眼神飄開，小聲承認：「……我。」爸爸雙手一攤，露出找到同伴般的得意笑容，接著說：「所以我們兩個都有份！」媽媽在後方忍住笑，弟弟安靜地看著。鏡頭維持爸爸與姊姊的雙人中景，結尾微微拉遠，讓媽媽與弟弟清楚留在背景。所有對白使用自然的台灣華語，說話者正確、口型同步。",
       "cast": [
-        "姊姊",
         "爸爸",
         "媽媽",
+        "姊姊",
         "弟弟"
       ],
       "references": [
         "storyboards/s10.png"
       ],
-      "duration": 5,
-      "continue_from": "s09"
+      "duration": 6,
+      "continue_from": "s09",
+      "size": "480x640",
+      "generate_audio": true
     },
     {
       "id": "s11",
       "prompt": "同一間黃昏客廳，以全家四人中景重新切入。人物造型依照參考圖，但忽略參考圖背景與手持物；媽媽沒有背包，姊姊與弟弟雙手空空。媽媽終於忍不住摀嘴笑出來，爸爸和姊姊心虛地互看一眼。弟弟在畫面一側慢慢舉起手，準備插話。媽媽笑著說：「好啦，你們兩個都不乖！」鏡頭稍微拉寬，讓全家四人都留在畫面內。所有對白使用自然的台灣華語，說話者正確、口型同步。",
       "cast": [
-        "媽媽",
         "爸爸",
+        "媽媽",
         "姊姊",
         "弟弟"
       ],
       "references": [
         "storyboards/s11.png"
       ],
-      "duration": 4
+      "duration": 6,
+      "size": "480x640",
+      "generate_audio": true
     },
     {
       "id": "s12",
       "prompt": "延續上一鏡的全家四人構圖。弟弟把手舉得更高，認真又得意地大聲說：「我沒有喝！」全家愣住一秒，接著爸爸、媽媽和姊姊一起笑出來，弟弟也跟著笑。鏡頭緩慢拉遠成溫馨的客廳全景，黃昏暖光灑滿房間，以全家笑聲自然收尾。所有對白使用自然的台灣華語，說話者正確、口型同步。",
       "cast": [
-        "弟弟",
         "爸爸",
         "媽媽",
-        "姊姊"
+        "姊姊",
+        "弟弟"
       ],
       "references": [
         "storyboards/s12.png"
       ],
-      "duration": 5,
-      "continue_from": "s11"
+      "duration": 6,
+      "continue_from": "s11",
+      "size": "480x640",
+      "generate_audio": true
     }
   ],
   "output": {
