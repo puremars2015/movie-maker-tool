@@ -281,7 +281,13 @@ class ProjectTab(ttk.Frame):
         if caps:
             self.duration_combo["values"] = [str(d) for d in caps.supported_durations]
             self.size_combo["values"] = caps.sorted_sizes()
-        self.chain_combo["values"] = ["（不接續）"] + [s.get("id", "") for s in self.scenes]
+
+        # 不要把自己列進「接續自」——選了會被忽略，使用者只會看到沒反應。
+        current_id = None
+        if self.current_index is not None and self.current_index < len(self.scenes):
+            current_id = self.scenes[self.current_index].get("id")
+        others = [s.get("id", "") for s in self.scenes if s.get("id") != current_id]
+        self.chain_combo["values"] = ["（不接續）"] + others
 
     def _refresh_table(self) -> None:
         self.tree.delete(*self.tree.get_children())
@@ -377,6 +383,7 @@ class ProjectTab(ttk.Frame):
 
         self._flush_editor()
         self.current_index = index
+        self._refresh_options()          # 先更新「接續自」清單，才排得掉新選這一鏡自己
         self._load_editor(self.scenes[index])
         self._refresh_table()   # 結束時選取列會等於 current_index，巢狀事件一比就返回
 
