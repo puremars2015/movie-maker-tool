@@ -23,3 +23,5 @@ __pycache__/
 build/
 dist/
 *.spec
+
+青蛙王子/
