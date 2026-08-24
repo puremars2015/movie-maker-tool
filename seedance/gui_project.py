@@ -15,16 +15,18 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import cost as cost_module
 from .capabilities import ModelCapabilities
 from .config import get_api_key
 from .errors import SeedanceError
+from .media import FILE_DIALOG_TYPES, is_url
 from .project import ProjectState, load_project, write_template
 from .project_runner import plan_project, run_project
 
 STATUS_MARK = {"done": "✓ 完成", "failed": "✗ 失敗", "running": "… 進行中", "pending": "待生成"}
+IMAGE_TYPES = [("圖片", "*.png *.jpg *.jpeg *.webp *.gif *.bmp"), ("所有檔案", "*.*")]
 
 
 class ProjectTab(ttk.Frame):
@@ -36,6 +38,7 @@ class ProjectTab(ttk.Frame):
         self.scenes: list[dict] = []                # 原始 dict，存檔時直接寫回
         self.current_index: int | None = None
         self.cast_vars: dict[str, tk.BooleanVar] = {}
+        self.scene_refs: list[str] = []          # 目前這一鏡的專屬素材
         self.messages: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
@@ -102,7 +105,7 @@ class ProjectTab(ttk.Frame):
         editor.rowconfigure(1, weight=1)
 
         ttk.Label(editor, text="提示詞").grid(row=0, column=0, sticky="nw", pady=2)
-        self.prompt_text = tk.Text(editor, height=7, wrap="word", font=("Microsoft JhengHei UI", 10))
+        self.prompt_text = tk.Text(editor, height=5, wrap="word", font=("Microsoft JhengHei UI", 10))
         self.prompt_text.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(2, 8))
 
         row = 2
@@ -127,6 +130,7 @@ class ProjectTab(ttk.Frame):
         self.chain_var = tk.StringVar()
         self.chain_combo = ttk.Combobox(editor, textvariable=self.chain_var, state="readonly")
         self.chain_combo.grid(row=row, column=1, sticky="ew", pady=3)
+        self.chain_combo.bind("<<ComboboxSelected>>", lambda _e: self._sync_frame_widgets())
 
         row += 1
         self.audio_var = tk.BooleanVar(value=False)
@@ -134,13 +138,66 @@ class ProjectTab(ttk.Frame):
             row=row, column=0, columnspan=2, sticky="w", pady=3)
 
         row += 1
-        ttk.Label(editor, text="出場角色").grid(row=row, column=0, sticky="nw", pady=3)
+        cast_header = ttk.Frame(editor)
+        cast_header.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(cast_header, text="出場角色").pack(side="left")
+        ttk.Button(cast_header, text="編輯角色表…", width=11, command=self._edit_cast).pack(side="right")
+
+        row += 1
         self.cast_frame = ttk.Frame(editor)
-        self.cast_frame.grid(row=row, column=1, sticky="ew", pady=3)
+        self.cast_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(2, 6))
+
+        # 這一鏡專屬的素材：與角色表無關，適合放場景圖、道具參考或風格圖。
+        row += 1
+        ref_header = ttk.Frame(editor)
+        ref_header.grid(row=row, column=0, columnspan=2, sticky="ew")
+        ttk.Label(ref_header, text="本鏡參考素材").pack(side="left")
+        ttk.Button(ref_header, text="移除", width=6, command=self._remove_scene_ref).pack(side="right", padx=2)
+        ttk.Button(ref_header, text="新增…", width=7, command=self._add_scene_refs).pack(side="right")
+
+        row += 1
+        self.ref_list = tk.Listbox(editor, height=3, activestyle="none", exportselection=False)
+        self.ref_list.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(2, 6))
+
+        row += 1
+        ttk.Label(editor, text="首影格").grid(row=row, column=0, sticky="w", pady=3)
+        self.first_frame_var = tk.StringVar()
+        self.first_frame_widgets = self._image_picker(editor, row, self.first_frame_var)
+
+        row += 1
+        ttk.Label(editor, text="尾影格").grid(row=row, column=0, sticky="w", pady=3)
+        self.last_frame_var = tk.StringVar()
+        self._image_picker(editor, row, self.last_frame_var)
+
+        row += 1
+        self.frame_hint = ttk.Label(editor, text="", foreground="#888",
+                                    font=("Microsoft JhengHei UI", 8), wraplength=300)
+        self.frame_hint.grid(row=row, column=0, columnspan=2, sticky="w")
 
         row += 1
         ttk.Button(editor, text="套用到此列", command=self._apply_editor).grid(
-            row=row, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+            row=row, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+    def _image_picker(self, parent, row: int, var: tk.StringVar) -> tuple:
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=1, sticky="ew", pady=3)
+        frame.columnconfigure(0, weight=1)
+        entry = ttk.Entry(frame, textvariable=var)
+        entry.grid(row=0, column=0, sticky="ew")
+
+        def choose() -> None:
+            path = filedialog.askopenfilename(title="選擇圖片", filetypes=IMAGE_TYPES)
+            if path:
+                var.set(self._relative_to_project(path))
+
+        def clear() -> None:
+            var.set("")
+
+        browse = ttk.Button(frame, text="…", width=3, command=choose)
+        browse.grid(row=0, column=1, padx=(4, 0))
+        remove = ttk.Button(frame, text="✕", width=3, command=clear)
+        remove.grid(row=0, column=2, padx=(2, 0))
+        return entry, browse, remove
 
     def _build_bottom(self) -> None:
         bottom = ttk.Frame(self)
@@ -336,6 +393,12 @@ class ProjectTab(ttk.Frame):
         for name, var in self.cast_vars.items():
             var.set(name in selected)
 
+        self.scene_refs = list(scene.get("references") or [])
+        self._refresh_ref_list()
+        self.first_frame_var.set(scene.get("first_frame") or "")
+        self.last_frame_var.set(scene.get("last_frame") or "")
+        self._sync_frame_widgets()
+
     def _flush_editor(self) -> None:
         """把編輯區的欄位寫回目前這一列的資料。純資料操作，不碰任何元件狀態。"""
         if self.current_index is None or self.current_index >= len(self.scenes):
@@ -362,6 +425,95 @@ class ProjectTab(ttk.Frame):
             scene["cast"] = cast
         else:
             scene.pop("cast", None)
+
+        if self.scene_refs:
+            scene["references"] = list(self.scene_refs)
+        else:
+            scene.pop("references", None)
+
+        # 接續會自動填首影格，兩者互斥，所以有接續時就不寫 first_frame。
+        first = self.first_frame_var.get().strip()
+        if first and not scene.get("continue_from"):
+            scene["first_frame"] = first
+        else:
+            scene.pop("first_frame", None)
+
+        last = self.last_frame_var.get().strip()
+        if last:
+            scene["last_frame"] = last
+        else:
+            scene.pop("last_frame", None)
+
+    # --- 素材 ---------------------------------------------------------
+
+    def _relative_to_project(self, path: str) -> str:
+        """能相對就相對，讓專案資料夾整包搬移或分享時路徑仍然有效。"""
+        if not self.project or is_url(path):
+            return path
+        try:
+            return Path(path).resolve().relative_to(self.project.root).as_posix()
+        except ValueError:
+            return str(Path(path))
+
+    def _add_scene_refs(self) -> None:
+        if self.current_index is None:
+            messagebox.showinfo("先選一個分鏡", "請先在左邊選取要加素材的分鏡。")
+            return
+        paths = filedialog.askopenfilenames(title="選擇本鏡參考素材", filetypes=FILE_DIALOG_TYPES)
+        for path in paths:
+            relative = self._relative_to_project(path)
+            if relative not in self.scene_refs:
+                self.scene_refs.append(relative)
+        self._refresh_ref_list()
+
+    def _remove_scene_ref(self) -> None:
+        for index in reversed(self.ref_list.curselection()):
+            del self.scene_refs[index]
+        self._refresh_ref_list()
+
+    def _refresh_ref_list(self) -> None:
+        self.ref_list.delete(0, "end")
+        for source in self.scene_refs:
+            self.ref_list.insert("end", source)
+
+    def _sync_frame_widgets(self) -> None:
+        """有接續時鎖住首影格欄位——由程式抽前一鏡的最後一格填入，手動指定會衝突。"""
+        chained = bool(self.chain_var.get()) and self.chain_var.get() != "（不接續）"
+        state = "disabled" if chained else "normal"
+        for widget in getattr(self, "first_frame_widgets", ()):
+            widget.configure(state=state)
+        if chained:
+            self.first_frame_var.set("")
+            self.frame_hint.configure(text="首影格會自動取自接續的前一鏡，不需要也不能手動指定。")
+        else:
+            self.frame_hint.configure(text="首尾影格用來精確控制開頭／結尾畫面；只想維持角色一致就用出場角色即可。")
+
+    def _edit_cast(self) -> None:
+        if not self.project:
+            return
+        CastDialog(self, self.project)
+
+    def _on_cast_changed(self, renames: dict[str, str] | None = None) -> None:
+        """角色表改完後：套用改名、重建勾選框、把已不存在的角色從各鏡移除。
+
+        改名一定要連帶搬移各鏡的引用，否則那個角色會從所有分鏡裡靜靜消失，
+        使用者要等到影片生出來才發現人不見了。
+        """
+        renames = renames or {}
+        names = set(self.project.cast)
+        for scene in self.scenes:
+            current = [renames.get(n, n) for n in (scene.get("cast") or [])]
+            kept = [n for n in current if n in names]
+            if kept:
+                scene["cast"] = kept
+            else:
+                scene.pop("cast", None)
+
+        self._build_cast_checkboxes()
+        if self.current_index is not None and self.current_index < len(self.scenes):
+            self._load_editor(self.scenes[self.current_index])
+        self._refresh_table()
+        self._log("角色表已更新：%s" % ("、".join(self.project.cast) or "（空）"))
 
     def _apply_editor(self, silent: bool = False) -> None:
         """寫回資料並刷新畫面。給「套用到此列」按鈕與存檔／執行前呼叫。"""
@@ -533,3 +685,144 @@ class ProjectTab(ttk.Frame):
         self.log_text.insert("end", message + "\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+
+class CastDialog(tk.Toplevel):
+    """角色表編輯：名稱 ↔ 圖片。
+
+    角色表是整個專案共用的，各鏡只引用名字。所以這裡改一次圖，所有用到該角色的
+    分鏡都會跟著換——這正是 cast 存在的理由，不必逐鏡重貼路徑。
+    """
+
+    def __init__(self, parent: ProjectTab, project):
+        super().__init__(parent)
+        self.parent_tab = parent
+        self.project = project
+        self.entries: list[list[str]] = [[name, path] for name, path in project.cast.items()]
+        self.renames: dict[str, str] = {}
+
+        self.title("編輯角色表")
+        self.geometry("560x360")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+
+        self._build()
+        self._refresh()
+
+    def _build(self) -> None:
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            frame,
+            text="各分鏡以名稱引用角色。換圖只要改這裡，所有用到的分鏡都會跟著換。",
+            foreground="#666",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
+        self.tree = ttk.Treeview(frame, columns=("name", "path"), show="headings", selectmode="browse")
+        self.tree.heading("name", text="角色名")
+        self.tree.heading("path", text="圖片")
+        self.tree.column("name", width=120)
+        self.tree.column("path", width=380)
+        self.tree.grid(row=1, column=0, sticky="nsew")
+
+        scroll = ttk.Scrollbar(frame, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.grid(row=1, column=1, sticky="ns")
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        for text, command in (
+            ("新增角色…", self._add), ("換圖…", self._replace),
+            ("重新命名", self._rename), ("移除", self._remove),
+        ):
+            ttk.Button(buttons, text=text, width=11, command=command).pack(side="left", padx=2)
+
+        confirm = ttk.Frame(frame)
+        confirm.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(confirm, text="確定", width=10, command=self._confirm).pack(side="right")
+        ttk.Button(confirm, text="取消", width=10, command=self.destroy).pack(side="right", padx=6)
+
+    def _refresh(self) -> None:
+        self.tree.delete(*self.tree.get_children())
+        for index, (name, path) in enumerate(self.entries):
+            self.tree.insert("", "end", iid=str(index), values=(name, path))
+
+    def _selected(self) -> int | None:
+        selection = self.tree.selection()
+        return int(selection[0]) if selection else None
+
+    def _add(self) -> None:
+        paths = filedialog.askopenfilenames(title="選擇角色圖", filetypes=IMAGE_TYPES)
+        taken = {name for name, _ in self.entries}
+        for path in paths:
+            relative = self.parent_tab._relative_to_project(path)
+            name = Path(path).stem
+            suffix = 2
+            while name in taken:            # 同名會蓋掉別人，自動加序號避開
+                name = "%s%d" % (Path(path).stem, suffix)
+                suffix += 1
+            taken.add(name)
+            self.entries.append([name, relative])
+        self._refresh()
+
+    def _replace(self) -> None:
+        index = self._selected()
+        if index is None:
+            return
+        path = filedialog.askopenfilename(title="選擇新的角色圖", filetypes=IMAGE_TYPES)
+        if path:
+            self.entries[index][1] = self.parent_tab._relative_to_project(path)
+            self._refresh()
+
+    def _rename(self) -> None:
+        index = self._selected()
+        if index is None:
+            return
+        old = self.entries[index][0]
+        new = simpledialog.askstring("重新命名", "新的角色名：", initialvalue=old, parent=self)
+        if not new or new == old:
+            return
+        if any(name == new for i, (name, _) in enumerate(self.entries) if i != index):
+            messagebox.showwarning("名稱重複", "已經有叫「%s」的角色了。" % new, parent=self)
+            return
+        self.entries[index][0] = new
+        # 記錄原始名字 → 新名字，確定時才用它搬移各鏡的引用
+        original = next((o for o, c in self.renames.items() if c == old), old)
+        self.renames[original] = new
+        self._refresh()
+
+    def _remove(self) -> None:
+        index = self._selected()
+        if index is None:
+            return
+        name = self.entries[index][0]
+        users = [s.get("id") for s in self.parent_tab.scenes if name in (s.get("cast") or [])]
+        if users and not messagebox.askyesno(
+            "確認移除",
+            "「%s」正被 %s 使用，移除後那些分鏡會少掉這個角色。要繼續嗎？"
+            % (name, "、".join(users)),
+            parent=self,
+        ):
+            return
+        del self.entries[index]
+        self._refresh()
+
+    def _confirm(self) -> None:
+        missing = [name for name, path in self.entries
+                   if not is_url(path) and not (self.project.root / path).is_file()
+                   and not Path(path).is_file()]
+        if missing and not messagebox.askyesno(
+            "找不到圖片",
+            "這些角色的圖片找不到：%s\n\n仍要儲存嗎？（轉出前的檢查會再擋一次）" % "、".join(missing),
+            parent=self,
+        ):
+            return
+
+        cast = {name: path for name, path in self.entries}
+        self.project.cast = cast
+        self.project.raw["cast"] = cast     # 存檔時是從 raw 寫回去的
+        self.parent_tab._on_cast_changed(self.renames)
+        self.destroy()
