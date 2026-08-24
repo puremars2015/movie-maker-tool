@@ -39,6 +39,7 @@ class ProjectTab(ttk.Frame):
         self.current_index: int | None = None
         self.cast_vars: dict[str, tk.BooleanVar] = {}
         self.scene_refs: list[str] = []          # 目前這一鏡的專屬素材
+        self.picked_ids: set[str] = set()        # 勾選要轉出的分鏡；空的代表全部未完成
         self.messages: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
         self.worker: threading.Thread | None = None
@@ -73,22 +74,23 @@ class ProjectTab(ttk.Frame):
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
-        columns = ("status", "id", "dur", "cast", "chain", "cost", "prompt")
+        columns = ("pick", "status", "id", "dur", "cast", "chain", "cost", "prompt")
         self.tree = ttk.Treeview(left, columns=columns, show="headings", selectmode="browse")
         headings = {
-            "status": ("狀態", 70), "id": ("編號", 55), "dur": ("秒", 35),
+            "pick": ("轉出", 40), "status": ("狀態", 70), "id": ("編號", 55), "dur": ("秒", 35),
             "cast": ("角色", 90), "chain": ("接續", 55), "cost": ("估價", 60),
-            "prompt": ("提示詞", 240),
+            "prompt": ("提示詞", 220),
         }
         for key, (label, width) in headings.items():
             self.tree.heading(key, text=label)
-            self.tree.column(key, width=width, anchor="w")
+            self.tree.column(key, width=width, anchor="center" if key == "pick" else "w")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
         scroll = ttk.Scrollbar(left, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.grid(row=0, column=1, sticky="ns")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Button-1>", self._on_tree_click)
 
         buttons = ttk.Frame(left)
         buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
@@ -97,6 +99,13 @@ class ProjectTab(ttk.Frame):
             ("上移", lambda: self._move(-1)), ("下移", lambda: self._move(1)),
         ):
             ttk.Button(buttons, text=text, width=9, command=command).pack(side="left", padx=2)
+
+        picks = ttk.Frame(left)
+        picks.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Label(picks, text="點「轉出」欄可勾選要生成哪幾鏡；都不勾就是全部未完成的。",
+                  foreground="#888", font=("Microsoft JhengHei UI", 8)).pack(side="left")
+        ttk.Button(picks, text="清除勾選", width=9, command=self._clear_picks).pack(side="right", padx=2)
+        ttk.Button(picks, text="勾選未完成", width=11, command=self._pick_pending).pack(side="right")
 
     def _build_editor(self, parent) -> None:
         editor = ttk.LabelFrame(parent, text="編輯選取的分鏡", padding=10)
@@ -295,18 +304,19 @@ class ProjectTab(ttk.Frame):
             return
 
         estimates = self._estimates()
+        self._prune_picks()
+        targets = self._target_ids()
         total = 0.0
-        todo = 0
+
         for index, scene in enumerate(self.scenes):
             scene_id = scene.get("id", "s%02d" % (index + 1))
-            status = self.state.status_of(scene_id) if self.state else "pending"
-            if self.state and self.state.is_done(scene_id):
-                status = "done"
-            else:
-                todo += 1
+            done = bool(self.state and self.state.is_done(scene_id))
+            status = "done" if done else (self.state.status_of(scene_id) if self.state else "pending")
+            if scene_id in targets:
                 total += estimates.get(scene_id, 0.0)
 
             self.tree.insert("", "end", iid=str(index), values=(
+                "☑" if scene_id in self.picked_ids else "☐",
                 STATUS_MARK.get(status, status),
                 scene_id,
                 scene.get("duration", self.project.defaults.get("duration", "")),
@@ -317,15 +327,81 @@ class ProjectTab(ttk.Frame):
             ))
 
         spent = self.state.total_cost() if self.state else 0.0
+        scope = "勾選 %d 鏡" % len(targets) if self.picked_ids else "待生成 %d 鏡" % len(targets)
         self.summary_var.set(
-            "待生成 %d 鏡，預估上限 US$%.3f（實際約 US$%.3f）｜已花費 US$%.4f"
-            % (todo, total, total * 0.416, spent)
+            "%s，預估上限 US$%.3f（實際約 US$%.3f）｜已花費 US$%.4f"
+            % (scope, total, total * 0.416, spent)
         )
+        if getattr(self, "run_button", None):
+            self.run_button.configure(
+                text="轉出勾選的 %d 鏡" % len(targets) if self.picked_ids else "開始轉出"
+            )
 
         # 重建表格會清掉選取，補回來並保持與 current_index 一致；不一致的話
         # 佇列裡的 <<TreeviewSelect>> 會被當成「使用者換了一列」而互相打架。
         if self.current_index is not None and 0 <= self.current_index < len(self.scenes):
             self.tree.selection_set(str(self.current_index))
+
+    # --- 勾選要轉出的分鏡 ---------------------------------------------
+
+    def _on_tree_click(self, event):
+        """點「轉出」欄切換勾選。回傳 break 讓這一下不要順便改變選取列，
+        否則勾一個框就會把右邊的編輯區也切走，很干擾。"""
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        if self.tree.identify_column(event.x) != "#1":
+            return None
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return None
+
+        scene_id = self.scenes[int(row)].get("id")
+        if not scene_id:
+            return "break"
+        if scene_id in self.picked_ids:
+            self.picked_ids.discard(scene_id)
+        else:
+            self.picked_ids.add(scene_id)
+        self._refresh_table()
+        return "break"
+
+    def _target_ids(self) -> list[str]:
+        """這次實際會生成的分鏡：有勾選就只算勾的，並一律排除已完成的。"""
+        ids = [s.get("id") for s in self.scenes if s.get("id")]
+        if self.picked_ids:
+            ids = [i for i in ids if i in self.picked_ids]
+        return [i for i in ids if not (self.state and self.state.is_done(i))]
+
+    def _prune_picks(self) -> None:
+        self.picked_ids &= {s.get("id") for s in self.scenes if s.get("id")}
+
+    def _pick_pending(self) -> None:
+        self.picked_ids = {s.get("id") for s in self.scenes
+                           if s.get("id") and not (self.state and self.state.is_done(s["id"]))}
+        self._refresh_table()
+
+    def _clear_picks(self) -> None:
+        self.picked_ids.clear()
+        self._refresh_table()
+
+    def _missing_dependencies(self, targets: list[str]) -> list[str]:
+        """勾選的分鏡若要接續某鏡，而那鏡既沒完成也沒被勾，就得補進來，
+        否則它永遠等不到前一鏡，plan_project 會直接擋下整批。"""
+        by_id = {s.get("id"): s for s in self.scenes}
+        needed: list[str] = []
+        queue_ = list(targets)
+        seen = set(targets)
+        while queue_:
+            scene = by_id.get(queue_.pop())
+            dep = scene.get("continue_from") if scene else None
+            if not dep or dep in seen:
+                continue
+            if self.state and self.state.is_done(dep):
+                continue
+            seen.add(dep)
+            needed.append(dep)
+            queue_.append(dep)
+        return needed
 
     def _estimates(self) -> dict[str, float]:
         """逐鏡估價。
@@ -411,7 +487,11 @@ class ProjectTab(ttk.Frame):
         if self.current_index is None or self.current_index >= len(self.scenes):
             return
         scene = self.scenes[self.current_index]
-        scene["id"] = self.id_var.get().strip() or scene.get("id", "")
+        previous_id = scene.get("id", "")
+        scene["id"] = self.id_var.get().strip() or previous_id
+        if previous_id != scene["id"] and previous_id in self.picked_ids:
+            self.picked_ids.discard(previous_id)
+            self.picked_ids.add(scene["id"])
         scene["prompt"] = self.prompt_text.get("1.0", "end").strip()
 
         if self.duration_var.get().isdigit():
@@ -589,8 +669,31 @@ class ProjectTab(ttk.Frame):
             self._log("專案未能重新載入，已中止轉出（沒有送出任何請求）。")
             return
 
+        targets = self._target_ids()
+        if not targets:
+            messagebox.showinfo(
+                "沒有待生成的鏡頭",
+                "勾選的分鏡都已完成。" if self.picked_ids else "全部分鏡都已完成。",
+            )
+            return
+
+        # 勾選時可能漏掉被接續的前一鏡，先問要不要補進來
+        missing = self._missing_dependencies(targets) if self.picked_ids else []
+        if missing:
+            if not messagebox.askyesno(
+                "需要一併轉出",
+                "勾選的分鏡要接續 %s，但它還沒完成。\n\n要一併轉出嗎？（不加的話無法生成）"
+                % "、".join(missing),
+            ):
+                self._log("已取消（未送出，不計費）。")
+                return
+            self.picked_ids.update(missing)
+            self._refresh_table()
+            targets = self._target_ids()
+
+        only = targets if self.picked_ids else None
         try:
-            plan = plan_project(self.project, self.state)
+            plan = plan_project(self.project, self.state, only=only)
         except SeedanceError as exc:
             messagebox.showerror("專案檢查未通過", str(exc))
             return
@@ -629,6 +732,7 @@ class ProjectTab(ttk.Frame):
                     api_key=api_key,
                     concurrency=3,
                     approved=True,          # 上面已確認
+                    only=only,
                     log=lambda m: self.messages.put(("log", m)),
                     should_cancel=self.cancel_event.is_set,
                 )
